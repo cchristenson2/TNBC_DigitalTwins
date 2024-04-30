@@ -1,16 +1,24 @@
-# ROM.py
+# ReducedModel.py
 """ Building ROM for reaction diffusion model through projections
-    - Augment data
-    - Construct basis and operators
-    
+*getProjectionBasis(snapshots, r = 0)
+    - Uses scipy's SVD to build the basis starting from snapshots
+*constructROM_RXDIF(tumor, bounds, augmentation = 'average', depth = 8, samples = None, r = 0, zipped = None, num = 2)
+    - Constructs ROM from the data in zipped, starting from tumor NTC maps
+*augmentAverage(tumor, depth)
+    - Augments data through sequential averages and smoothing directly on measured data
+*augmentSample(tumor, samples)
+    - Augments data through simulations with the parameters contained in samples  
+*visualizeBasis(ROM, shape)
+    - plots the central slice (if 3D) of each mode for visualization
 
-Last updated: 4/23/2024
+Last updated: 4/29/2024
 """
 
 import numpy as np
 # import scipy.sparse.linalg as la
 import scipy.linalg as la
 import scipy.ndimage as ndi
+import matplotlib.pyplot as plt
 
 import Library as lib
 
@@ -27,24 +35,30 @@ def augmentAverage(tumor, depth):
         mask[mask > 0] = 1
         for j in range(depth):
             nt = N_aug.shape[2]
+            curr = 0;
             for i in range(nt-1):
-                N_mid = (N_aug[:,:,i] + N_aug[:,:,i])/2
+                N_mid = (N_aug[:,:,i+curr] + N_aug[:,:,i+1+curr])/2
                 N_mid = np.squeeze(ndi.gaussian_filter(N_mid, 0.5))
-                N_aug = np.insert(N_aug,i+1,N_mid,axis=2)
+                # if j == 0:
+                #     N_mid = np.squeeze(ndi.gaussian_filter(N_mid, 0.5))
+                N_aug = np.insert(N_aug,i+1+curr,N_mid,axis=2)
+                curr += 1
         for i in range(N_aug.shape[2]):
             temp = N_aug[:,:,i]
             temp[mask!=1] = 0
             N_aug[:,:,i] = temp
         N_aug = np.reshape(N_aug, (-1,N_aug.shape[2]))
+        
     else:
         mask = np.sum(N_aug,axis=3)
         mask[mask > 0] = 1
         for j in range(depth):
             nt = N_aug.shape[3]
+            curr = 0;
             for i in range(nt-1):
-                N_mid = (N_aug[:,:,:,i] + N_aug[:,:,:,i])/2
+                N_mid = (N_aug[:,:,:,i+curr] + N_aug[:,:,:,i+1+curr])/2
                 N_mid = np.squeeze(ndi.gaussian_filter(N_mid, 0.5))
-                N_aug = np.insert(N_aug,i+1,N_mid,axis=3)
+                N_aug = np.insert(N_aug,i+1+curr,N_mid,axis=3)
         for i in range(N_aug.shape[3]):
             temp = N_aug[:,:,:,i]
             temp[mask!=1] = 0
@@ -86,21 +100,24 @@ def getProjectionBasis(snapshots, r = 0):
     #     full_r = 20
     # else:
     #     full_r = r
-
-    # U, s = la.svds(snapshots, full_r)[0,1]
+    # U, s, _ = la.svds(snapshots, full_r)
+    # U = np.flip(U, axis = 1)
+    # s = np.flip(s, axis = 0)
+    
     U, s, _ = la.svd(snapshots)
     
     if r == 0:
         cummulative_e = np.cumsum(s)
         max_e = np.max(cummulative_e)
-        r = cummulative_e[cummulative_e < max_e * 0.995].size + 1
+        r = cummulative_e[cummulative_e < max_e * 0.995].size
         
-    V = U[:,1:r+1]
+    V = U[:,0:r+1]
     return V
 
 ###############################################################################
 # Construct ROM models
-def constructROM_RXDIF(tumor, bounds, augmentation = 'average', depth = 8, samples = None, r = 0, zipped = None):
+def constructROM_RXDIF(tumor, bounds, augmentation = 'average', depth = 8, 
+                       samples = None, r = 0, zipped = None, num = 2):
     """
     Build the reduced order model from data in tumor. Defaults to the complete
     RXDIF w AC chemo model, pass zipped to try different model constraints
@@ -143,11 +160,40 @@ def constructROM_RXDIF(tumor, bounds, augmentation = 'average', depth = 8, sampl
     V = getProjectionBasis(snapshots, r)
     
     #Build library for operators required for RXDIF w AC model
-    Library = lib.getROMLibrary(tumor, V, bounds)
+    Library = lib.getROMLibrary(tumor, V, bounds, num = num, zipped = zipped)
+    
+    #Reduce tumor inputs
+    ReducedTumor = {}
+    if tumor['Mask'].ndim == 2:
+        ReducedTumor['N_r'] = V.T @ np.reshape(tumor['N'],(-1,tumor['N'].shape[2]))
+        if 'Future N' in tumor.keys():
+            ReducedTumor['Future N_r'] = V.T @ np.reshape(tumor['Future N'],
+                                                          (-1,tumor['Future N'].shape[2]))
+    else:
+        ReducedTumor['N_r'] = V.T @ np.reshape(tumor['N'],(-1,tumor['N'].shape[3]))
+        if 'Future N' in tumor.keys():
+            ReducedTumor['Future N_r'] = V.T @ np.reshape(tumor['Future N'],
+                                                          (-1,tumor['Future N'].shape[3]))
     
     #Reduce measured tumor data
     ROM['V'] = V
     ROM['Library'] = Library
+    ROM['ReducedTumor'] = ReducedTumor
     
     return ROM
 
+###############################################################################
+#Functions for ROM usage
+def visualizeBasis(ROM, shape):
+    n,k = ROM['V'].shape
+    figure, ax = plt.subplots(2,int(np.ceil(k/2)), layout="constrained")
+    ax = np.reshape(ax,(-1))
+    for i in range(k):
+        mode = np.reshape(ROM['V'][:,i], shape)
+        if mode.ndim == 3:
+            s = round(mode.shape[2]/2)-1
+            mode = mode[:,:,s]
+        p = ax[i].imshow(mode)
+        ax[i].set_title('Mode '+str(i+1))
+        plt.colorbar(p,fraction=0.046, pad=0.04)
+    

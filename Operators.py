@@ -1,11 +1,19 @@
 # Operators.py
 """ Required functions for operator building and reducing
-    - Build operators required for RXDIF w AC model (either full (not written right now) or reduced)
+*buildReduced_A(V, tumor, d)
+*buildReduced_B(V, tumor, d)
+*buildReduced_H(V, tumor, d)
+*buildReduced_T(V, tumor, d)
+    - Build operators required for RXDIF w AC model (either full (not written
+                                                         right now) or reduced)
         - A: diffusivity operator, scalar or local field
         - B: linear proliferation operator, scalar or local field
         - H: quadratic proliferation operator, scalar or local field
         - T: treatment operator, scalar
 
+#Internal
+*getARow(ind, d, bcs, h)
+    - Used to get a single row of the diffusivity operator
 Last updated: 4/23/2024
 """
 
@@ -54,7 +62,9 @@ def getARow(ind, d, bcs, h):
     #Z - Direction boundaries - if applicable
     if bcs.ndim == 4:
         if bcs[ind,2] == 0:
-            row_z[[0,0,0],[ind-sx*sy, ind, ind+sx*sy]] = d * np.array([1, -2, 1]) / h[2]**2
+            row_z[[0,0,0],[ind-sx*sy, ind, ind+sx*sy]] = (d 
+                                                          * np.array([1, -2, 1]) 
+                                                          / h[2]**2)
         elif bcs[ind,2] == -1:
             row_z[[0,0],[ind, ind+sx*sy]] = d * np.array([-2, 2]) / h[2]**2
         elif bcs[ind,2] == 1:
@@ -97,7 +107,8 @@ def buildReduced_A(V, tumor, d):
 
 def buildReduced_B(V, tumor, k):
     """
-    Build reduced linear proliferation operator for proliferation k, based on tumor size
+    Build reduced linear proliferation operator for proliferation k, based on 
+                                                                     tumor size
     
     Parameters
     ----------
@@ -115,15 +126,17 @@ def buildReduced_B(V, tumor, k):
     """
     n, r = V.shape
     B_r = np.zeros([r,r])
-    if k.size == 1:
+    if isinstance(k, float):
         k = k * np.ones([tumor['AUC'].size])
+        
     for i in range(n):
         B_r += (V[np.newaxis,i,:] * k[i]).T @ V[np.newaxis,i,:]
     return B_r
     
 def buildReduced_H(V, tumor, k):
      """
-     Build reduced quadratic proliferation operator for proliferation k, based on tumor size
+     Build reduced quadratic proliferation operator for proliferation k, based 
+                                                                  on tumor size
      
      Parameters
      ----------
@@ -144,7 +157,8 @@ def buildReduced_H(V, tumor, k):
      if k.size == 1:
          k = k * np.ones([tumor['AUC'].size])
      for i in range(n):
-         H_r += (V[np.newaxis,i,:] * k[i]).T @ np.kron(V[np.newaxis,i,:],V[np.newaxis,i,:])
+         H_r += (V[np.newaxis,i,:] * k[i]).T @ np.kron(V[np.newaxis,i,:],
+                                                       V[np.newaxis,i,:])
      
      return H_r
     

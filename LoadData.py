@@ -2,11 +2,11 @@
 """ Loading .mat files and processing for digital twins
 *LoadData_mat(location, downsample='true', inplane=4, inslice=1, crop2D = 'false')
 
-Internal:
-    *downSample_2D(N, AUC, Mask, Tissues, h, inplane, inslice)
-    *downSample_3D(N, AUC, Mask, Tissues, h, inplane, inslice)
-    *buildBoundaries_2D(Mask)
-    *buildBoundaries_3D(Mask)
+#Useful internal functions
+*downSample_2D(N, AUC, Mask, Tissues, h, inplane, inslice)
+*downSample_3D(N, AUC, Mask, Tissues, h, inplane, inslice)
+*buildBoundaries_2D(Mask)
+*buildBoundaries_3D(Mask)
 
 Last updated: 4/22/2024
 """
@@ -71,7 +71,8 @@ def stackNTC(dat):
             NTCs = dat[key]
             NTCs = np.expand_dims(NTCs,NTCs.ndim)
         else:
-            NTCs = np.append(NTCs, np.expand_dims(dat[key],NTCs.ndim - 1), NTCs.ndim - 1)
+            NTCs = np.append(NTCs, np.expand_dims(dat[key],NTCs.ndim - 1), 
+                             NTCs.ndim - 1)
     return NTCs
 
 ###############################################################################
@@ -89,8 +90,11 @@ def downSample_2D(N, AUC, Mask, Tissues, h, inplane, inslice):
     h_down = h.copy()
     h_down[0] = sx*h[0] / round(sx/inplane)
     h_down[1] = sy*h[1] / round(sy/inplane)
-    X_coarse,Y_coarse = np.meshgrid(np.linspace(h_down[0],sx*h[0],round(sx/inplane)),
-                                             np.linspace(h_down[1],sy*h[1],round(sy/inplane)), indexing='ij')
+    X_coarse,Y_coarse = np.meshgrid(np.linspace(h_down[0],sx*h[0],
+                                                round(sx/inplane)),
+                                    np.linspace(h_down[1],sy*h[1],
+                                                round(sy/inplane)),
+                                    indexing='ij')
     ## NTC downsampling
     N_norm = N / np.prod(h) #Normalize by voxel volume
     interp = RegularGridInterpolator((x,y), N_norm) #Construct interpolator
@@ -132,9 +136,13 @@ def downSample_3D(N, AUC, Mask, Tissues, h, inplane, inslice):
     h_down[0] = sx*h[0] / round(sx/inplane)
     h_down[1] = sy*h[1] / round(sy/inplane)
     h_down[2] = sz*h[2] / round(sz/inslice)
-    X_coarse,Y_coarse,Z_coarse = np.meshgrid(np.linspace(h_down[0],sx*h[0],round(sx/inplane)),
-                                             np.linspace(h_down[1],sy*h[1],round(sy/inplane)),
-                                             np.linspace(h_down[2],sz*h[2],round(sz/inslice)), indexing='ij')
+    X_coarse,Y_coarse,Z_coarse = np.meshgrid(np.linspace(h_down[0],sx*h[0],
+                                                         round(sx/inplane)),
+                                             np.linspace(h_down[1],sy*h[1],
+                                                         round(sy/inplane)),
+                                             np.linspace(h_down[2],sz*h[2],
+                                                         round(sz/inslice)), 
+                                             indexing='ij')
     ## NTC downsampling
     N_norm = N / np.prod(h) #Normalize by voxel volume
     interp = RegularGridInterpolator((x,y,z), N_norm) #Construct interpolator
@@ -252,7 +260,8 @@ def buildBoundaries_3D(Mask):
 ###############################################################################
 ## .mat files
 # Load full resolution and downsample if requested
-def LoadTumor_mat(location, downsample = True, inplane = 4, inslice = 1, crop2D = False, split = None):
+def LoadTumor_mat(location, downsample = True, inplane = 4, inslice = 1, 
+                  crop2D = False, split = None):
     """
     Parameters
     ----------
@@ -298,9 +307,13 @@ def LoadTumor_mat(location, downsample = True, inplane = 4, inslice = 1, crop2D 
     #Downsample
     if downsample:
         if N.ndim == 3:
-            N, AUC, Mask, Tissues, dimensions = downSample_2D(N, AUC, Mask, Tissues, dimensions, inplane, inslice)
+            N, AUC, Mask, Tissues, dimensions = downSample_2D(N, AUC, Mask, 
+                                                              Tissues, dimensions,
+                                                              inplane, inslice)
         else:
-            N, AUC, Mask, Tissues, dimensions = downSample_3D(N, AUC, Mask, Tissues, dimensions, inplane, inslice)
+            N, AUC, Mask, Tissues, dimensions = downSample_3D(N, AUC, Mask, 
+                                                              Tissues, dimensions,
+                                                              inplane, inslice)
     
     #Convert to cell fraction
     theta = pack_dens * np.prod(dimensions) / cell_size

@@ -61,7 +61,8 @@ def RXDIF_2D(N0, k, d, t, h, dt, bcs):
                 
                 #FDM in X direction
                 if boundary[0] == 0.:
-                    lap_x = d*(Sim[y,x-1,step-1] - 2*Sim[y,x,step-1] + Sim[y,x+1,step-1])/h**2
+                    lap_x = d*(Sim[y,x-1,step-1] - 2*Sim[y,x,step-1]
+                               + Sim[y,x+1,step-1])/h**2
                 elif boundary[0] == 1.:
                     lap_x = d*(2*Sim[y,x-1,step-1] - 2*Sim[y,x,step-1])/h**2
                 elif boundary[0] == -1.:
@@ -70,7 +71,8 @@ def RXDIF_2D(N0, k, d, t, h, dt, bcs):
                     lap_x = 0           
                 #FDM in Y direction
                 if boundary[1] == 0.:
-                    lap_y = d*(Sim[y-1,x,step-1] - 2*Sim[y,x,step-1] + Sim[y+1,x,step-1])/h**2
+                    lap_y = d*(Sim[y-1,x,step-1] - 2*Sim[y,x,step-1] 
+                               + Sim[y+1,x,step-1])/h**2
                 elif boundary[1] == 1.:
                     lap_y = d*(2*Sim[x,y-1,step-1] - 2*Sim[y,x,step-1])/h**2
                 elif boundary[1] == -1.:
@@ -110,7 +112,7 @@ def updateDosing(step, nt_trx, delivs, dt):
     if delivs.size > 0:
         delivs = delivs + dt
     if delivs.size < nt_trx.size:
-        if step - 1 >= nt_trx[delivs.size]: #Delivery occurred at previous time step
+        if step - 1 >= nt_trx[delivs.size]: #Delivery occurred at previous step
             delivs = np.append(delivs,0)  
     return delivs
   
@@ -205,39 +207,52 @@ def RXDIF_3D_wAC(N0, k, d, alpha, trx_params, t, h, dt, bcs):
                     
                     #FDM in X direction
                     if boundary[0] == 0.:
-                        lap_x = d*(Sim[y,x-1,z,step-1] - 2*Sim[y,x,z,step-1] + Sim[y,x+1,z,step-1])/h[0]**2
+                        lap_x = d*(Sim[y,x-1,z,step-1] - 2*Sim[y,x,z,step-1] 
+                                   + Sim[y,x+1,z,step-1])/h[0]**2
                     elif boundary[0] == 1.:
-                        lap_x = d*(2*Sim[y,x-1,z,step-1] - 2*Sim[y,x,z,step-1])/h[0]**2
+                        lap_x = d*(2*Sim[y,x-1,z,step-1] 
+                                   - 2*Sim[y,x,z,step-1])/h[0]**2
                     elif boundary[0] == -1.:
-                        lap_x = d*(-2*Sim[y,x,z,step-1] + 2*Sim[y,x+1,z,step-1])/h[0]**2
+                        lap_x = d*(-2*Sim[y,x,z,step-1] 
+                                   + 2*Sim[y,x+1,z,step-1])/h[0]**2
                     else:
                         lap_x = 0
                     #FDM in Y direction
                     if boundary[1] == 0.:
-                        lap_y = d*(Sim[y-1,x,z,step-1] - 2*Sim[y,x,z,step-1] + Sim[y+1,x,z,step-1])/h[1]**2
+                        lap_y = d*(Sim[y-1,x,z,step-1] - 2*Sim[y,x,z,step-1]
+                                   + Sim[y+1,x,z,step-1])/h[1]**2
                     elif boundary[1] == 1.:
-                        lap_y = d*(2*Sim[y-1,x,z,step-1] - 2*Sim[y,x,z,step-1])/h[1]**2
+                        lap_y = d*(2*Sim[y-1,x,z,step-1] 
+                                   - 2*Sim[y,x,z,step-1])/h[1]**2
                     elif boundary[1] == -1.:
-                        lap_y = d*(-2*Sim[y,x,z,step-1] + 2*Sim[y+1,x,z,step-1])/h[1]**2
+                        lap_y = d*(-2*Sim[y,x,z,step-1] 
+                                   + 2*Sim[y+1,x,z,step-1])/h[1]**2
                     else:
                         lap_y = 0
                     #FDM in Z direction
                     if boundary[2] == 0.:
-                        lap_z = d*(Sim[y,x,z-1,step-1] - 2*Sim[y,x,z,step-1] + Sim[y,x,z+1,step-1])/h[2]**2
+                        lap_z = d*(Sim[y,x,z-1,step-1] - 2*Sim[y,x,z,step-1] 
+                                   + Sim[y,x,z+1,step-1])/h[2]**2
                     elif boundary[2] == 1.:
-                        lap_z = d*(2*Sim[y,x,z-1,step-1] - 2*Sim[y,x,z,step-1])/h[2]**2
+                        lap_z = d*(2*Sim[y,x,z-1,step-1] 
+                                   - 2*Sim[y,x,z,step-1])/h[2]**2
                     elif boundary[2] == -1.:
-                        lap_z = d*(-2*Sim[y,x,z,step-1] + 2*Sim[y,x,z+1,step-1])/h[2]**2
+                        lap_z = d*(-2*Sim[y,x,z,step-1] 
+                                   + 2*Sim[y,x,z+1,step-1])/h[2]**2
                     else:
                         lap_z = 0
                     
                     #Add together
                     diffusion = lap_y + lap_x + lap_z
-                    proliferation = Sim[y,x,z,step-1]*k[y,x,z]*(1 - Sim[y,x,z,step-1])
-                    treat = trx_params.get('AUC')[y,x,z] * Sim[y,x,z,step-1] * (drugs[0,step]*alpha[0] + drugs[1,step]*alpha[1])
+                    proliferation = (Sim[y,x,z,step-1]*k[y,x,z]
+                                     *(1 - Sim[y,x,z,step-1]))
+                    treat = (trx_params.get('AUC')[y,x,z] * Sim[y,x,z,step-1] 
+                             * (drugs[0,step]*alpha[0] + drugs[1,step]*alpha[1]))
                     
                     #Apply time stepping
-                    Sim[y,x,z,step] = Sim[y,x,z,step-1] + dt*(diffusion + proliferation - treat)
+                    Sim[y,x,z,step] = Sim[y,x,z,step-1] + dt*(diffusion 
+                                                              + proliferation 
+                                                              - treat)
                 
     return Sim[:,:,:,t_], drugs
 
@@ -302,7 +317,8 @@ def RXDIF_2D_wAC(N0, k, d, alpha, trx_params, t, h, dt, bcs):
                 
                 #FDM in X direction
                 if boundary[0] == 0.:
-                    lap_x = d*(Sim[y,x-1,step-1] - 2*Sim[y,x,step-1] + Sim[y,x+1,step-1])/h[0]**2
+                    lap_x = d*(Sim[y,x-1,step-1] - 2*Sim[y,x,step-1] 
+                               + Sim[y,x+1,step-1])/h[0]**2
                 elif boundary[0] == 1.:
                     lap_x = d*(2*Sim[y,x-1,step-1] - 2*Sim[y,x,step-1])/h[0]**2
                 elif boundary[0] == -1.:
@@ -311,7 +327,8 @@ def RXDIF_2D_wAC(N0, k, d, alpha, trx_params, t, h, dt, bcs):
                     lap_x = 0
                 #FDM in Y direction
                 if boundary[1] == 0.:
-                    lap_y = d*(Sim[y-1,x,step-1] - 2*Sim[y,x,step-1] + Sim[y+1,x,step-1])/h[1]**2
+                    lap_y = d*(Sim[y-1,x,step-1] - 2*Sim[y,x,step-1] 
+                               + Sim[y+1,x,step-1])/h[1]**2
                 elif boundary[1] == 1.:
                     lap_y = d*(2*Sim[y-1,x,step-1] - 2*Sim[y,x,step-1])/h[1]**2
                 elif boundary[1] == -1.:
@@ -323,7 +340,8 @@ def RXDIF_2D_wAC(N0, k, d, alpha, trx_params, t, h, dt, bcs):
                 diffusion = lap_y + lap_x
                 proliferation = Sim[y,x,step-1]*k[y,x]*(1 - Sim[y,x,step-1])
                 
-                treat = trx_params.get('AUC')[y,x] * Sim[y,x,step-1] * (drugs[0,step]*alpha[0] + drugs[1,step]*alpha[1])
+                treat = (trx_params.get('AUC')[y,x] * Sim[y,x,step-1] 
+                         * (drugs[0,step]*alpha[0] + drugs[1,step]*alpha[1]))
                 
                 #Apply time stepping
                 Sim[y,x,step] = Sim[y,x,step-1] + dt*(diffusion + proliferation - treat)
@@ -367,7 +385,7 @@ def OP_RXDIF_wAC(N0, ops, trx_params, t, dt):
     T = ops.get('T')
     #If each drug does not have its own T operator, duplicate the first
     if np.atleast_3d(T).shape[2] == 1:
-        T = np.append(T,T,2)
+        T = np.append(np.atleast_3d(T),np.atleast_3d(T),2)
         
     beta, nt_trx, delivs, drugs, doses = setupTRX(trx_params, nt, dt)
     
@@ -379,9 +397,12 @@ def OP_RXDIF_wAC(N0, ops, trx_params, t, dt):
         for n in range(delivs.size):
             drugs[0,step] = drugs[0,step] + doses[n,0]*np.exp(-1*beta[0]*delivs[n])
             drugs[1,step] = drugs[1,step] + doses[n,1]*np.exp(-1*beta[1]*delivs[n])
-            
-            Sim[:,step] = Sim[:,step-1] + dt * (A@Sim[:,step-1] + B@Sim[:,step-1] - H@np.stepron(Sim[:,step-1],Sim[:,step-1]) - 
-                                          (T[:,:,0]*drugs[0,step])@Sim[:,step-1] - (T[:,:,1]*drugs[1,step])@Sim[:,step-1])
+        
+        #solve for next time point
+        Sim[:,step] = Sim[:,step-1] + dt * (A@Sim[:,step-1] + B@Sim[:,step-1] 
+                                            - H@np.kron(Sim[:,step-1],Sim[:,step-1]) 
+                                            - (T[:,:,0]*drugs[0,step])@Sim[:,step-1] 
+                                            - (T[:,:,1]*drugs[1,step])@Sim[:,step-1])
             
     return Sim[:,t_], drugs       
             
@@ -440,6 +461,50 @@ class Parameter:
     def getBounds(self):
         return self.bounds
     
-class ReducedParameter(Parameter):
+class ReducedParameter:
     def __init__(self, name, assignment, basis, value = None):
-        super().__init__(name, assignment, value)           
+        valid_names = ['k']
+        valid_assignment = ['r']
+        
+        #Store name of parameter
+        if name.lower() in valid_names:
+            self.name = name.lower()
+        else:
+            raise ValueError('Valid parameter names are currently; "k"')
+        
+        #Store assignment type for parameter
+        if assignment.lower() in valid_assignment:
+            self.assignment = assignment.lower()
+        else:
+            raise ValueError('Valid assignment types are currently; "r"')
+        self.value = value
+        self.basis = basis
+        
+    def __str__(self):
+        if self.assignment == 'r':
+            string1 = 'reduced'   
+        
+        if self.value == None:
+            string2 = 'not assigned'
+        else:
+            string2 = 'assigned'
+        
+        return 'Parameter '+self.name+' is '+string1+'\nValue is currently '+string2
+    
+    def setBounds(self, bounds):
+        self.bounds = bounds
+        
+    def setFullBounds(self, bounds):
+        self.full_bounds = bounds
+    
+    def update(self, value):
+        self.value = value
+        
+    def get(self):
+        return self.value
+    
+    def getBounds(self):
+        return self.bounds  
+    
+    def getFullBounds(self):
+        return self.full_bounds 
