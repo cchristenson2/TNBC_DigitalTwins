@@ -103,9 +103,10 @@ def checkBounds(new, old, bounds):
     return new
 
 def updateParams(calibrated, params):
-    for i, elem in enumerate(params):
-        params[i].update(calibrated[params[i].name])
-    return params
+    new_params = copy.deepcopy(params)
+    for elem in new_params:
+        new_params[elem].update(calibrated[elem].copy())
+    return new_params
 
 ###############################################################################
 #FOM LM calibration
@@ -186,13 +187,13 @@ def calibrateRXDIF_LM(tumor, params, dt = 0.5, options = {}, parallel = False,
     found_params = []
     curr = {}
     for elem in params:
-        found_params.append(elem.name)
-        if elem.value == None:
-            curr[elem.name] = np.mean(elem.bounds)
+        found_params.append(elem)
+        if params[elem].value == None:
+            curr[elem] = np.mean(params[elem].bounds)
         else:
-            curr[elem.name] = elem.value
-        if elem.assignment == 'l':
-            curr[elem.name] = curr[elem.name] * Mask
+            curr[elem] = params[elem].value
+        if params[elem].assignment == 'l':
+            curr[elem] = curr[elem] * Mask
     for elem in required_params:
         if elem not in found_params:
             if elem == 'k':
@@ -203,12 +204,12 @@ def calibrateRXDIF_LM(tumor, params, dt = 0.5, options = {}, parallel = False,
     #Pull out calibrated parameters
     p_locator = []
     for elem in params:
-        if elem.assignment == 'g':
-            p_locator.append([elem.name,0,elem.getBounds()])
-        elif elem.assignment == 'l':
+        if params[elem].assignment == 'g':
+            p_locator.append([elem,0,params[elem].getBounds()])
+        elif params[elem].assignment == 'l':
             for i in range(Mask[Mask==1].size):
-                p_locator.append([elem.name,tuple(np.argwhere(Mask==1)[i,:]),
-                                  elem.getBounds()])
+                p_locator.append([elem,tuple(np.argwhere(Mask==1)[i,:]),
+                                  params[elem].getBounds()])
     
     #Jacobian size
     num_p = len(p_locator)
@@ -469,29 +470,29 @@ def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = Fal
     coeff_bounds = {}
     curr = {}
     for elem in params:
-        found_params.append(elem.name)
-        if elem.value == None:
-            if elem.assignment == 'r':
+        found_params.append(elem)
+        if params[elem].value == None:
+            if params[elem].assignment == 'r':
                 #For R we build a guess proliferation map, then find the corresponding reduction
-                k_target = np.mean(elem.getFullBounds())
+                k_target = np.mean(params[elem].getBounds())
                 if k_target == 0:
                     k_target = 1e-3
                 k_test = np.zeros([n,1])
                 k_test[np.nonzero(np.abs(np.sum(ROM['V'],axis=1)) > 1e-6)] = k_target
                 k_r_test = np.squeeze(ROM['V'].T @ k_test)
 
-                k_r_test = forceBounds(k_r_test, ROM['V'], elem.getFullBounds(),
-                                       elem.getBounds()).copy()
+                k_r_test = forceBounds(k_r_test, ROM['V'], params[elem].getBounds(),
+                                       params[elem].getCoeffBounds()).copy()
 
-                curr[elem.name] = k_r_test.copy()
-                full_bounds[elem.name] = elem.getFullBounds()
-                coeff_bounds[elem.name] = elem.getBounds()
-                initial_guess[elem.name] = k_r_test
+                curr[elem] = k_r_test.copy()
+                full_bounds[elem] = params[elem].getBounds()
+                coeff_bounds[elem] = params[elem].getCoeffBounds()
+                initial_guess[elem] = k_r_test
             else:
-                curr[elem.name] = np.mean(elem.getBounds())
+                curr[elem] = np.mean(params[elem].getBounds())
                 # curr[elem.name] = elem.getBounds()[0]*options['delta']
         else:
-            curr[elem.name] = elem.value
+            curr[elem] = params[elem].value
     for elem in required_params: #Cannot turn off proliferation right now
         if elem not in found_params:
             curr[elem] = 0
@@ -499,11 +500,11 @@ def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = Fal
     #Pull out calibrated parameters
     p_locator = []
     for elem in params:
-        if elem.assignment == 'g':
-            p_locator.append([elem.name,0,elem.getBounds()])
-        elif elem.assignment == 'r':
+        if params[elem].assignment == 'g':
+            p_locator.append([elem,0,params[elem].getBounds()])
+        elif params[elem].assignment == 'r':
             for i in range(r):
-                p_locator.append([elem.name,(i,),elem.getBounds()[i,:]])
+                p_locator.append([elem,(i,),params[elem].getCoeffBounds()[i,:]])
                 
     #Jacobian size
     num_p = len(p_locator)
@@ -620,29 +621,30 @@ def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = Fal
 # Internal for ROM - MCMC
 def generatePriors(params):
     priors = {}
-    for i, elem in enumerate(params):
-        if elem.assignment != 'f':
-            if elem.name == 'd':
-                priors['d'] = stats.truncnorm((elem.getBounds()[0] - 5e-4)/2.5e-4,
-                                              (elem.getBounds()[1] - 5e-4)/2.5e-4,
+    for elem in params:
+        if params[elem].assignment != 'f':
+            if elem == 'd':
+                priors['d'] = stats.truncnorm((params[elem].getBounds()[0] - 5e-4)/2.5e-4,
+                                              (params[elem].getBounds()[1] - 5e-4)/2.5e-4,
                                               loc = 5e-4, scale = 2.5e-4)
-            if elem.name == 'alpha':
-                priors['alpha'] = stats.uniform(elem.getBounds()[0],
-                                                elem.getBounds()[1] - elem.getBounds()[0])
-            if elem.name == 'beta_a':
-                priors['beta_a'] = stats.truncnorm((elem.getBounds()[0] - 0.60)/0.0625,
-                                                   (elem.getBounds()[1] - 0.60)/0.0625,
+            if elem == 'alpha':
+                priors['alpha'] = stats.uniform(params[elem].getBounds()[0],
+                                                params[elem].getBounds()[1] 
+                                                - params[elem].getBounds()[0])
+            if elem == 'beta_a':
+                priors['beta_a'] = stats.truncnorm((params[elem].getBounds()[0] - 0.60)/0.0625,
+                                                   (params[elem].getBounds()[1] - 0.60)/0.0625,
                                                    loc = 0.60, scale = 0.0625)
-            if elem.name == 'beta_c':
-                priors['beta_c'] = stats.truncnorm((elem.getBounds()[0] - 3.25)/0.5625,
-                                                   (elem.getBounds()[1] - 3.25)/0.5625,
+            if elem == 'beta_c':
+                priors['beta_c'] = stats.truncnorm((params[elem].getBounds()[0] - 3.25)/0.5625,
+                                                   (params[elem].getBounds()[1] - 3.25)/0.5625,
                                                    loc = 3.25, scale = 0.5625)
-            if elem.name == 'k':
-                if elem.assignment == 'g':
-                    priors['k'] = stats.uniform(elem.getBounds()[0],
-                                                elem.getBounds()[1] - elem.getBounds()[0])
-                elif elem.assignment == 'r':
-                    bounds = elem.getBounds()
+            if elem == 'k':
+                if params[elem].assignment == 'g':
+                    priors['k'] = stats.uniform(params[elem].getBounds()[0],
+                                                params[elem].getBounds()[1] - params[elem].getBounds()[0])
+                elif params[elem].assignment == 'r':
+                    bounds = params[elem].getCoeffBounds()
                     for j in range(bounds.shape[0]):
                         priors['k'+str(j)] = stats.uniform(bounds[j,0],
                                                            bounds[j,1] - bounds[j,0])
@@ -704,9 +706,9 @@ def unpackChains(params, chains, p_locator):
     new_params = copy.deepcopy(params)
     for elem in new_params:
         for i, loc_elem in enumerate(p_locator):
-            if elem.name == loc_elem:
+            if elem == loc_elem:
                 indices = p_locator[loc_elem]
-                elem.update(chains[:,indices].copy())
+                new_params[elem].update(chains[:,indices].copy())
                 
     return new_params
 
@@ -782,32 +784,32 @@ def calibrateRXDIF_gwMCMC_ROM(tumor, ROM, params, priors, dt = 0.5,
     ndim = 0
     curr = 0
     for elem in params:
-        found_params.append(elem.name)
-        if elem.assignment == 'g':
+        found_params.append(elem)
+        if params[elem].assignment == 'g':
             ndim += 1
             # p_locator.append({elem.name : 0})
-            p_locator[elem.name] = list([curr])
+            p_locator[elem] = list([curr])
             curr += 1
-            names.append(elem.name)
-        elif elem.assignment == 'r':
+            names.append(elem)
+        elif params[elem].assignment == 'r':
             ndim += r
             # p_locator.append({elem.name : list(range(r))})
-            p_locator[elem.name] = list(range(curr, curr+r))
+            p_locator[elem] = list(range(curr, curr+r))
             curr += r
-            full_bounds[elem.name] = elem.getFullBounds()
-            coeff_bounds[elem.name] = elem.getBounds()
+            full_bounds[elem] = params[elem].getBounds()
+            coeff_bounds[elem] = params[elem].getCoeffBounds()
             #Set good initial guess for bound forcing
-            k_target = np.mean(elem.getFullBounds())
+            k_target = np.mean(params[elem].getBounds())
             if k_target == 0:
                 k_target = 1e-3
             k_test = np.zeros([n,1])
             k_test[np.nonzero(np.abs(np.sum(ROM['V'],axis=1)) > 1e-6)] = k_target
             k_r_test = np.squeeze(ROM['V'].T @ k_test)
-            initial_guess[elem.name] = k_r_test
+            initial_guess[elem] = k_r_test
             for i in range(r):
-                names.append(elem.name+str(i))
-        elif elem.assignment == 'f':
-            fixed_params[elem.name] = elem.get()
+                names.append(elem+str(i))
+        elif params[elem].assignment == 'f':
+            fixed_params[elem] = params[elem].get()
     for elem in required_params: #Cannot turn off proliferation right now
         if elem not in found_params:
             if elem == 'sigma':
