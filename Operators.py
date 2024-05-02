@@ -14,7 +14,7 @@
 #Internal
 *getARow(ind, d, bcs, h)
     - Used to get a single row of the diffusivity operator
-Last updated: 4/23/2024
+Last updated: 4/30/2024
 """
 
 import numpy as np

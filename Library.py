@@ -12,7 +12,7 @@
 *constructGlobalLibrary(var, tumor, V, bounds, num)
 *constructLocalLibrary(var, tumor, V, bounds, num)
 
-Last updated: 4/29/2024
+Last updated: 4/30/2024
 """
 
 import numpy as np
@@ -67,9 +67,11 @@ def constructLocalLibrary(var, tumor, V, bounds, num):
         vec = np.linspace(temp[0,0],temp[0,1],num)
         for j in range(vec.size):
             if var == 'B':
-                Lib["Mode"+str(i)][str(j)] = op.buildReduced_B(V, tumor, V[:,i] * vec[j])
+                Lib["Mode"+str(i)][str(j)] = op.buildReduced_B(V, tumor, V[:,i]
+                                                               * vec[j])
             elif var == 'H':
-                Lib["Mode"+str(i)][str(j)] = op.buildReduced_H(V, tumor, V[:,i] * vec[j])
+                Lib["Mode"+str(i)][str(j)] = op.buildReduced_H(V, tumor, V[:,i]
+                                                               * vec[j])
         Lib["Mode"+str(i)]['vec'] = vec
     Lib['coeff_bounds'] = coeff_bounds
     return Lib
@@ -111,9 +113,11 @@ def getROMLibrary(tumor, V, bounds, num = 2, zipped = None):
     Library = {}
     for name, param, kind in zipped:
         if kind.lower() == 'g':
-            Library[name] = constructGlobalLibrary(name, tumor, V, bounds[param], num)
+            Library[name] = constructGlobalLibrary(name, tumor, V,
+                                                   bounds[param], num)
         elif kind.lower() == 'l':
-            Library[name] = constructLocalLibrary(name, tumor, V, bounds[param], num)
+            Library[name] = constructLocalLibrary(name, tumor, V,
+                                                  bounds[param], num)
 
     return Library
 
@@ -140,13 +144,15 @@ def interpolateLocal(Libs, vals):
         if len(Lib_curr['vec']) == 2:
             dif = abs(vals[i] - Lib_curr['vec'])
             dist = Lib_curr['vec'][1] - Lib_curr['vec'][0]
-            ops += Lib_curr['0']*(1 - (dif[0]/dist)) + Lib_curr['1']*(1 - (dif[1]/dist))
+            ops += (Lib_curr['0']*(1 - (dif[0]/dist)) 
+                    + Lib_curr['1']*(1 - (dif[1]/dist)))
         else:
             ind  = Lib_curr['vec'][Lib_curr['vec'] <= vals[i]].size - 1
             dif = np.zeros((2))
             dif[0] = abs(vals[i] - Lib_curr['vec'][ind])
             dif[1] = abs(vals[i] - Lib_curr['vec'][ind+1])
             dist = Lib_curr['vec'][ind] - Lib_curr['vec'][ind+1]
-            ops += np.array(Lib_curr[str(ind)]*(1 - (dif[0]/dist)) + Lib_curr[str(ind+1)]*(1 - (dif[1]/dist)))
+            ops += np.array(Lib_curr[str(ind)]*(1 - (dif[0]/dist)) 
+                            + Lib_curr[str(ind+1)]*(1 - (dif[1]/dist)))
             
     return ops

@@ -11,7 +11,7 @@
 *visualizeBasis(ROM, shape)
     - plots the central slice (if 3D) of each mode for visualization
 
-Last updated: 4/29/2024
+Last updated: 4/30/2024
 """
 
 import numpy as np

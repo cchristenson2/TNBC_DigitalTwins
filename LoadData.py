@@ -8,7 +8,7 @@
 *buildBoundaries_2D(Mask)
 *buildBoundaries_3D(Mask)
 
-Last updated: 4/22/2024
+Last updated: 4/30/2024
 """
 
 import numpy as np

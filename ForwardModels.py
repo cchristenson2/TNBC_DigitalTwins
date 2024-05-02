@@ -13,7 +13,7 @@ Constists of:
 Internal:
     *updateDosing(k, nt_trx, delivs, dt)
 
-Last updated: 4/22/2024
+Last updated: 5/1/2024
 """
 
 import numpy as np
@@ -410,16 +410,16 @@ def OP_RXDIF_wAC(N0, ops, trx_params, t, dt):
 # Parameter class object and functions
 class Parameter:
     def __init__(self, name, assignment, value = None):
-        valid_names = ['d','k','alpha','beta_a','beta_c']
+        valid_names = ['d','k','alpha','beta_a','beta_c','sigma']
         valid_assignment = ['f','l','g']
-        default_values = [5e-3, 0.05, 0.4, 0.60, 3.25]
+        default_values = [5e-3, 0.05, 0.4, 0.60, 3.25, 0.0]
         
         #Store name of parameter
         if name.lower() in valid_names:
             self.name = name.lower()
         else:
             raise ValueError('Valid parameter names are currently; "d","k",'
-                             '"alpha","beta_a","beta_c"')
+                             '"alpha","beta_a","beta_c","sigma"')
         
         #Store assignment type for parameter
         if assignment.lower() in valid_assignment:
@@ -442,7 +442,7 @@ class Parameter:
         else:
             string1 = 'global'     
         
-        if self.value == None:
+        if self.value is None:
             string2 = 'not assigned'
         else:
             string2 = 'assigned'
@@ -460,6 +460,9 @@ class Parameter:
     
     def getBounds(self):
         return self.bounds
+    
+    def delete(self):
+        self.value = None
     
 class ReducedParameter:
     def __init__(self, name, assignment, basis, value = None):
@@ -484,7 +487,7 @@ class ReducedParameter:
         if self.assignment == 'r':
             string1 = 'reduced'   
         
-        if self.value == None:
+        if self.value is None:
             string2 = 'not assigned'
         else:
             string2 = 'assigned'
@@ -508,3 +511,6 @@ class ReducedParameter:
     
     def getFullBounds(self):
         return self.full_bounds 
+    
+    def delete(self):
+        self.value = None
