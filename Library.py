@@ -7,24 +7,26 @@
     - Interpolate global parameters from library
 *interpolateLocal(Libs, vals)
     - Interpolate local parameters from library
+*getOperators(curr, ROM)
+    - Gets operators for all parameters in a dictionary
 
-#Useful internal functions
+#Internal only
 *constructGlobalLibrary(var, tumor, V, bounds, num)
 *constructLocalLibrary(var, tumor, V, bounds, num)
 
-Last updated: 4/30/2024
+Last updated: 5/2/2024
 """
 
 import numpy as np
 
 import Operators as op
 
-###############################################################################
-# Internal constructions
-def constructGlobalLibrary(var, tumor, V, bounds, num):
+########################## Internal constructions #############################
+def _constructGlobalLibrary(var, tumor, V, bounds, num):
     """
-    Used to build an operator library with num components for operator label 'var'
-    Works for all operators based on global parameters used in the RXDIF model
+    Used to build an operator library with num components for operator 
+    label 'var'.
+    Works for all operators based on global parameters used in the RXDIF model.
     """
     Lib = {}
     vec = np.linspace(bounds[0], bounds[1], num)
@@ -41,10 +43,11 @@ def constructGlobalLibrary(var, tumor, V, bounds, num):
     
     return Lib
 
-def constructLocalLibrary(var, tumor, V, bounds, num):
+def _constructLocalLibrary(var, tumor, V, bounds, num):
     """
-    Used to build an operator library with num components for operator label 'var'
-    Only works for local proliferation based operators
+    Used to build an operator library with num components for operator 
+    label 'var'.
+    Only works for local proliferation based operators.
     """
     Lib = {}
     n,r = V.shape
@@ -76,8 +79,7 @@ def constructLocalLibrary(var, tumor, V, bounds, num):
     Lib['coeff_bounds'] = coeff_bounds
     return Lib
 
-###############################################################################
-# Construct library
+############################# Construct Library ###############################
 def getROMLibrary(tumor, V, bounds, num = 2, zipped = None):
     """
     Builds the operator library needed for model
@@ -113,17 +115,16 @@ def getROMLibrary(tumor, V, bounds, num = 2, zipped = None):
     Library = {}
     for name, param, kind in zipped:
         if kind.lower() == 'g':
-            Library[name] = constructGlobalLibrary(name, tumor, V,
+            Library[name] = _constructGlobalLibrary(name, tumor, V,
                                                    bounds[param], num)
         elif kind.lower() == 'l':
-            Library[name] = constructLocalLibrary(name, tumor, V,
+            Library[name] = _constructLocalLibrary(name, tumor, V,
                                                   bounds[param], num)
 
     return Library
 
 
-###############################################################################
-# Library interpolation
+########################### Library interpolation #############################
 def interpolateGlobal(Lib, val):
     if len(Lib['vec']) == 2:
         dif = abs(val - Lib['vec'])
@@ -156,3 +157,33 @@ def interpolateLocal(Libs, vals):
                             + Lib_curr[str(ind+1)]*(1 - (dif[1]/dist)))
             
     return ops
+
+def getOperators(curr, ROM):
+    """
+    Parameters
+    ----------
+    curr : dict
+        Keys are parameter names, with value attached
+    ROM : dict
+        ROM library
+
+    Returns
+    -------
+    operators : dict
+        Operators for all parameters
+
+    """
+    operators = {}
+    for elem in curr:
+        if elem == 'd':
+            operators['A'] = interpolateGlobal(ROM['Library']['A'],curr[elem])
+        elif elem == 'k':
+            if curr[elem].size == 1:
+                operators['B'] = interpolateGlobal(ROM['Library']['B'],curr[elem])
+                operators['H'] = interpolateGlobal(ROM['Library']['H'],curr[elem])
+            else:
+                operators['B'] = interpolateLocal(ROM['Library']['B'],curr[elem])
+                operators['H'] = interpolateLocal(ROM['Library']['H'],curr[elem])
+        elif elem == 'alpha':
+            operators['T'] = interpolateGlobal(ROM['Library']['T'],curr[elem])
+    return operators

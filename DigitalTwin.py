@@ -1,12 +1,19 @@
 # DigitalTwin.py
-""" Defines digital twin object
-    Consists of:
-        - Tumor data, acquired and yet to be acquired
-        - Treatment controls
-        - ROM (if requested)
-    Optional:
-        - Parameters
-        - Volume and cell time courses
+""" 
+Defines digital twin object
+Consists of:
+    - Tumor data, acquired and yet to be acquired
+    - Treatment controls
+    - ROM (if requested)
+Optional:
+    - Parameters
+    - Volume and cell time courses
+        
+Defines parameter object
+Constists of:
+    - parameter name; d, alpha, k, beta1, beta2
+    - assignment; f, l, or g for fixed, local, or global
+    - value; default = None, replaced by either fixed value or calibration
 
 Last updated: 5/2/2024
 """
@@ -14,8 +21,19 @@ import numpy as np
 
 import LoadData as ld
 import ReducedModel as rm
+import ForwardModels as fwd
 import Calibrations as cal
 
+###############################################################################
+#Global variables
+call_dict = {
+    'fwd.RXDIF_2D_wAC': fwd.RXDIF_2D_wAC,
+    'fwd.RXDIF_3D_wAC': fwd.RXDIF_3D_wAC,
+    'fwd.OP_RXDIF_wAC': fwd.OP_RXDIF_wAC}
+
+###############################################################################
+###############################################################################
+######################### Digital twin definition #############################
 class DigitalTwin:
     def __init__(self, location, load_args = {}, ROM = False, ROM_args = {}, params = None):
         """
@@ -50,7 +68,18 @@ class DigitalTwin:
      
     def setParams(self, params):
         self.params = params
-
+        
+    def getPriors(self, params):
+        self.priors = cal.generatePriors(params)
+        
+########################## Calibration functions ##############################
+    def assimilate(self, cal_type, cal_args{}):
+        if 'Future N' in self.tumor:
+            if self.tumor['Mask'].ndim == 2:
+                N_save = np.atleast_3D(tumor['Future N'][:,:,1])
+            else:
+                N_save = np.atleast_3D(tumor['Future N'][:,:,1])
+        
     def calibrateTwin(self, cal_type, cal_args = {}):
         """
         Updates parameters of twin based on current tumor maps. Stores stats in
@@ -70,23 +99,24 @@ class DigitalTwin:
                                           'burnin','step_size','walker_factor'}
         """
         if cal_type == 'LM_FOM':
-            self.params, self.cal_stats = cal.calibrateRXDIF_LM(self.tumor, self.params, **cal_args)
+            self.params, self.cal_stats, self.model = cal.calibrateRXDIF_LM(self.tumor, self.params, **cal_args)
+            self.cal_type = 'LM'
         else:
             if hasattr(self, 'ROM'):
                 if cal_type == 'LM_ROM':
-                    self.params, self.cal_stats = cal.calibrateRXDIF_LM_ROM(self.tumor, self.ROM, self.params, **cal_args)
+                    self.params, self.cal_stats, self.model = cal.calibrateRXDIF_LM_ROM(self.tumor, self.ROM, self.params, **cal_args)
+                    self.cal_type = 'LM'
                 else:
                     if hasattr(self, 'priors'):
                         if cal_type == 'gwMCMC_ROM':
-                            self.params, self.ensemble_sampler = cal.calibrateRXDIF_gwMCMC_ROM(self.tumor, self.ROM, self.params, self.priors, **cal_args)
+                            self.params, self.ensemble_sampler, self.model = cal.calibrateRXDIF_gwMCMC_ROM(self.tumor, self.ROM, self.params, self.priors, **cal_args)
+                            self.cal_type = 'Bayes'
                     else:
                         raise ValueError('Priors must be contained in twin object for bayesian calibrations')                   
             else:
                  raise ValueError('ROM must be contained in twin object to use ROM based calibrations')   
-    
-    def getPriors(self, params):
-        self.priors = cal.generatePriors(params)
-        
+ 
+########################## Prediction and stats ###############################   
     @staticmethod
     def CCC_calc(a, b):
         return 0
@@ -98,17 +128,38 @@ class DigitalTwin:
     @staticmethod
     def getStats_SingleTime(a, b):
         return 0 
-    
-    def predict(self, threshold = 0.25, plot = False):
-        return 0
+ 
+    def predict(self, threshold = 0.25, plot = False, parallel = False):
         #First check if parameters have values assigned
         for elem in self.params:
             if elem.value is None:
-                raise ValueError('Some required parameters do not have values '
+                raise ValueError('Calibrated parameters do not have values '
                                  'assigned. Run calibrateTwin() first')
-
+        curr = {}
+        found_params = []
+        for elem in self.params:
+            curr[elem] = self.params.get()
+            found_params.append(elem)
+            
+        required_params = ['d','k','alpha','beta_a','beta_c']
+        #Set missing parameters to zero (off in forward model, still checks so can slow simulation)
+        for elem in set(found_params) ^ set(required_params):
+            if elem == 'k' & self.model != 'fwd.OP_RXDIF_wAC':
+                curr[elem] = np.zeros(self.tumor['Mask'].shape)
+            else:
+                curr[elem] = 0
+                
+        if self.cal_type == 'LM': #Single value/ndarrary for each parameter
+            print(0)
+            #Run forward model
+        elif self.cal_type == 'Bayes':
+            print(0)
+            #Run forward model for all samples
+            
+            
 ###############################################################################
-# Parameter class object and functions
+###############################################################################
+################## Parameter class object and functions #######################
 class Parameter:
     def __init__(self, name, assignment, value = None):
         valid_names = ['d','k','alpha','beta_a','beta_c','sigma']

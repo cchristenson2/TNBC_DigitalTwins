@@ -3,28 +3,22 @@
 *getProjectionBasis(snapshots, r = 0)
     - Uses scipy's SVD to build the basis starting from snapshots
 *constructROM_RXDIF(tumor, bounds, augmentation = 'average', depth = 8, samples = None, r = 0, zipped = None, num = 2)
-    - Constructs ROM from the data in zipped, starting from tumor NTC maps
-*augmentAverage(tumor, depth)
-    - Augments data through sequential averages and smoothing directly on measured data
-*augmentSample(tumor, samples)
-    - Augments data through simulations with the parameters contained in samples  
+    - Constructs ROM from the data in zipped, starting from tumor NTC maps 
 *visualizeBasis(ROM, shape)
     - plots the central slice (if 3D) of each mode for visualization
 
-Last updated: 4/30/2024
+Last updated: 5/2/2024
 """
 
 import numpy as np
-# import scipy.sparse.linalg as la
 import scipy.linalg as la
 import scipy.ndimage as ndi
 import matplotlib.pyplot as plt
 
 import Library as lib
 
-###############################################################################
-# Augmentation functions
-def augmentAverage(tumor, depth):
+########################## Augmentation functions #############################
+def _augmentAverage(tumor, depth):
     """
     Augments data by averaging the tumor NTC maps and applying a filter
     Performs 'depth' averages on the dataset
@@ -39,8 +33,6 @@ def augmentAverage(tumor, depth):
             for i in range(nt-1):
                 N_mid = (N_aug[:,:,i+curr] + N_aug[:,:,i+1+curr])/2
                 N_mid = np.squeeze(ndi.gaussian_filter(N_mid, 0.5))
-                # if j == 0:
-                #     N_mid = np.squeeze(ndi.gaussian_filter(N_mid, 0.5))
                 N_aug = np.insert(N_aug,i+1+curr,N_mid,axis=2)
                 curr += 1
         for i in range(N_aug.shape[2]):
@@ -67,7 +59,7 @@ def augmentAverage(tumor, depth):
             
     return N_aug
     
-def augmentSample(tumor, samples):
+def _augmentSample(tumor, samples):
     """
     Augments data by simulating to final time of tumor['t_scan'] using parameters
     contained in samples
@@ -78,8 +70,7 @@ def augmentSample(tumor, samples):
     
     return N_aug
 
-###############################################################################
-# Construct POD basis
+############################ Construct POD basis ##############################
 def getProjectionBasis(snapshots, r = 0):
     """
     Get orthogonal projecion matrix from snapshot data using SVD
@@ -96,14 +87,6 @@ def getProjectionBasis(snapshots, r = 0):
     V : ndarray
         Projection matrix
     """
-    # if r == 0:
-    #     full_r = 20
-    # else:
-    #     full_r = r
-    # U, s, _ = la.svds(snapshots, full_r)
-    # U = np.flip(U, axis = 1)
-    # s = np.flip(s, axis = 0)
-    
     U, s, _ = la.svd(snapshots)
     
     if r == 0:
@@ -114,8 +97,7 @@ def getProjectionBasis(snapshots, r = 0):
     V = U[:,0:r+1]
     return V
 
-###############################################################################
-# Construct ROM models
+############################## Construct ROMs #################################
 def constructROM_RXDIF(tumor, bounds, augmentation = 'average', depth = 8, 
                        samples = None, r = 0, zipped = None, num = 2):
     """
@@ -149,12 +131,12 @@ def constructROM_RXDIF(tumor, bounds, augmentation = 'average', depth = 8,
     #Augment the data
     ROM = {}
     if augmentation == 'average':
-        snapshots = augmentAverage(tumor, depth)
+        snapshots = _augmentAverage(tumor, depth)
     elif augmentation == 'sample':
         if samples == None:
             raise ValueError('augmentation specified as ''sample'' but samples were not provided')
         else:
-            snapshots = augmentSample(tumor, samples)
+            snapshots = _augmentSample(tumor, samples)
 
     #Build projecton basis
     V = getProjectionBasis(snapshots, r)
@@ -182,8 +164,7 @@ def constructROM_RXDIF(tumor, bounds, augmentation = 'average', depth = 8,
     
     return ROM
 
-###############################################################################
-#Functions for ROM usage
+######################## Functions for ROM usage ##############################
 def visualizeBasis(ROM, shape):
     n,k = ROM['V'].shape
     figure, ax = plt.subplots(2,int(np.ceil(k/2)), layout="constrained")

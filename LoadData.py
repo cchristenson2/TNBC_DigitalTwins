@@ -2,13 +2,13 @@
 """ Loading .mat files and processing for digital twins
 *LoadData_mat(location, downsample='true', inplane=4, inslice=1, crop2D = 'false')
 
-#Useful internal functions
+Extra:
 *downSample_2D(N, AUC, Mask, Tissues, h, inplane, inslice)
 *downSample_3D(N, AUC, Mask, Tissues, h, inplane, inslice)
 *buildBoundaries_2D(Mask)
 *buildBoundaries_3D(Mask)
 
-Last updated: 4/30/2024
+Last updated: 5/2/2024
 """
 
 import numpy as np
@@ -20,9 +20,8 @@ from scipy.interpolate import RegularGridInterpolator
 pack_dens = 0.7405
 cell_size = 4.189e-6
 
-###############################################################################
-# Internal load for restructuring data from MATLAB
-def loadmat(filename):
+########### Internal load for restructuring data from MATLAB ##################
+def _loadmat(filename):
     """
     this function should be called instead of direct spio.loadmat
     as it cures the problem of not properly recovering python dictionaries
@@ -55,7 +54,7 @@ def _todict(matobj):
             dict[strg] = elem
     return dict
 
-def stackNTC(dat):
+def _stackNTC(dat):
     """
     Get all NTC maps and stack in order
     Returns 3D array if 2D NTC maps or 4D array if 3D NTC maps
@@ -75,8 +74,7 @@ def stackNTC(dat):
                              NTCs.ndim - 1)
     return NTCs
 
-###############################################################################
-## Internal processing functions
+########################## Processing functions ###############################
 def downSample_2D(N, AUC, Mask, Tissues, h, inplane, inslice):
     """
     Downsamples all scan derived inputs based inplane and inslice factor
@@ -253,12 +251,8 @@ def buildBoundaries_3D(Mask):
                             boundary[2] = 1
                     bcs[y,x,z,:] = boundary
     return bcs
-                
-# def find(array, condition):
-#     return [i for i, elem in enumerate(array) if condition(elem)]
     
-###############################################################################
-## .mat files
+############################ Load .mat files ##################################
 # Load full resolution and downsample if requested
 def LoadTumor_mat(location, downsample = True, inplane = 4, inslice = 1, 
                   crop2D = False, split = None):
@@ -285,7 +279,7 @@ def LoadTumor_mat(location, downsample = True, inplane = 4, inslice = 1,
     tumor
         dictionary containing all scan info needed for digital twins
     """
-    data = loadmat(location)
+    data = _loadmat(location)
     tumor = {}
     
     #Pull out treatment regimen info
@@ -299,7 +293,7 @@ def LoadTumor_mat(location, downsample = True, inplane = 4, inslice = 1,
     pcr = data['pcr']
     
     #Pull out and prep scan data
-    N = stackNTC(data['full_res_dat'])
+    N = _stackNTC(data['full_res_dat'])
     AUC = data['full_res_dat']['AUC']
     Mask = data['full_res_dat']['BreastMask']
     Tissues = data['full_res_dat']['Tissues']

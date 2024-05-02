@@ -11,27 +11,20 @@
         - H: quadratic proliferation operator, scalar or local field
         - T: treatment operator, scalar
 
-#Internal
-*getARow(ind, d, bcs, h)
-    - Used to get a single row of the diffusivity operator
-Last updated: 4/30/2024
+Last updated: 5/2/2024
 """
 
 import numpy as np
 
-###############################################################################
-# Full sized operators - not needed for ROM, reduced memory requirements using
-# approximate method
+####################### Build full sized operators ############################
+#Not using since approximate saves memory but might write later
 
 
-
-###############################################################################
-# Reduce full sized operators
+###################### Reduce full sized operators ############################
 
 
-###############################################################################
-# Internal for building reduced operators
-def getARow(ind, d, bcs, h):
+################ Internal for building reduced operators ######################
+def _getARow(ind, d, bcs, h):
     if bcs.ndim == 3: #2D data input
         sy,sx = bcs.shape[0:2]
         n = sy*sx
@@ -74,8 +67,7 @@ def getARow(ind, d, bcs, h):
         
     return row
 
-###############################################################################
-# Build reduced operators directly
+#################### Build reduced operators directly #########################
 def buildReduced_A(V, tumor, d):
     """
     Build reduced diffusivity operator for diffusivity d, based on tumor size
@@ -98,7 +90,7 @@ def buildReduced_A(V, tumor, d):
     n, r = V.shape
     A_r = np.zeros([r,r])
     for i in range(n):
-        row = getARow(i, d, tumor['bcs'], tumor['h'])
+        row = _getARow(i, d, tumor['bcs'], tumor['h'])
         # print((row @ V).shape)
         # print(V[np.newaxis,i,:].T.shape)
         A_r += V[np.newaxis,i,:].T @ (row @ V)

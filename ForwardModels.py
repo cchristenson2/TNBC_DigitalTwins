@@ -10,16 +10,12 @@ Constists of:
     - assignment; f, l, or g for fixed, local, or global
     - value; default = None, replaced by either fixed value or calibration
 
-Internal:
-    *updateDosing(k, nt_trx, delivs, dt)
-
 Last updated: 5/2/2024
 """
 
 import numpy as np
 
-###############################################################################
-## Example base reaction diffusion model
+################# Example base reaction diffusion model #######################
 def RXDIF_2D(N0, k, d, t, h, dt, bcs):
     """
     Parameters
@@ -88,9 +84,8 @@ def RXDIF_2D(N0, k, d, t, h, dt, bcs):
                 
     return Sim[:,:,t_]
 
-###############################################################################
-# Internal functions for treatment solves
-def updateDosing(step, nt_trx, delivs, dt):
+################################ Internal prep ################################
+def _updateDosing(step, nt_trx, delivs, dt):
     """
     Parameters
     ----------
@@ -116,7 +111,7 @@ def updateDosing(step, nt_trx, delivs, dt):
             delivs = np.append(delivs,0)  
     return delivs
   
-def setupTRX(trx_params, nt, dt):
+def _setupTRX(trx_params, nt, dt):
     """
     Decrease repeated definitions in each individual forward models
     """
@@ -142,8 +137,7 @@ def setupTRX(trx_params, nt, dt):
 
     return beta, nt_trx, delivs, drugs, doses        
             
-###############################################################################
-## FDM based simulations
+############################ FDM based simulations ############################
 # Treatment included
 def RXDIF_3D_wAC(N0, k, d, alpha, trx_params, t, h, dt, bcs):
     """
@@ -188,12 +182,12 @@ def RXDIF_3D_wAC(N0, k, d, alpha, trx_params, t, h, dt, bcs):
     if np.isscalar(k):
         k = k*np.ones([sy,sx,sz])
         
-    beta, nt_trx, delivs, drugs, doses = setupTRX(trx_params, nt, dt)
+    beta, nt_trx, delivs, drugs, doses = _setupTRX(trx_params, nt, dt)
 
     #Time stepping
     for step in range(1,nt):
         
-        delivs  = updateDosing(step, nt_trx, delivs, dt)
+        delivs  = _updateDosing(step, nt_trx, delivs, dt)
         #Get current dosage
         for n in range(delivs.size):
             drugs[0,step] = drugs[0,step] + doses[n,0]*np.exp(-1*beta[0]*delivs[n])
@@ -299,12 +293,12 @@ def RXDIF_2D_wAC(N0, k, d, alpha, trx_params, t, h, dt, bcs):
     if np.isscalar(k):
         k = k*np.ones([sy,sx])
         
-    beta, nt_trx, delivs, drugs, doses = setupTRX(trx_params, nt, dt)
+    beta, nt_trx, delivs, drugs, doses = _setupTRX(trx_params, nt, dt)
 
     #Time stepping
     for step in range(1,nt):
         
-        delivs  = updateDosing(step, nt_trx, delivs, dt)
+        delivs  = _updateDosing(step, nt_trx, delivs, dt)
         #Get current dosage
         for n in range(delivs.size):
             drugs[0,step] = drugs[0,step] + doses[n,0]*np.exp(-1*beta[0]*delivs[n])
@@ -348,8 +342,8 @@ def RXDIF_2D_wAC(N0, k, d, alpha, trx_params, t, h, dt, bcs):
                 
     return Sim[:,:,t_], drugs
 
-###############################################################################
-## Operator based simulations (works wth 2D or 3D depending on input operators and states)
+########################## Operator based simulations #########################
+# Works wth 2D or 3D depending on input operators and states
 # Treatment included
 def OP_RXDIF_wAC(N0, ops, trx_params, t, dt):
     """
@@ -387,12 +381,12 @@ def OP_RXDIF_wAC(N0, ops, trx_params, t, dt):
     if np.atleast_3d(T).shape[2] == 1:
         T = np.append(np.atleast_3d(T),np.atleast_3d(T),2)
         
-    beta, nt_trx, delivs, drugs, doses = setupTRX(trx_params, nt, dt)
+    beta, nt_trx, delivs, drugs, doses = _setupTRX(trx_params, nt, dt)
     
     #Time stepping
     for step in range(1,nt):
         
-        delivs  = updateDosing(step, nt_trx, delivs, dt)
+        delivs  = _updateDosing(step, nt_trx, delivs, dt)
         #Get current dosage
         for n in range(delivs.size):
             drugs[0,step] = drugs[0,step] + doses[n,0]*np.exp(-1*beta[0]*delivs[n])

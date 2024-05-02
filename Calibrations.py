@@ -1,5 +1,5 @@
 # Calibrations.py
-""" Assimilate data in tumor based on the model chosen
+""" Calibrate data in tumor based on the method chosen
 *calibrateRXDIF_LM(tumor, params, dt = 0.5, options = {}, parallel = True, plot = True)
     - Calibrate requested parameters using FOM and LM
 *calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = True)
@@ -14,59 +14,56 @@
         alpha - single drug efficacy only; global, fixed, or off
         betas - Each drug individually; global, fixed, or off
     *All work with 2D or 3D
-    
-#Useful internal functions
-*getOperators(curr_params, ROM):
+*generatePriors(params)
+    - Generates priors based on parameters being calibrated. Lots of assumptions
+      hard coded into this.
 
 Last updated: 5/2/2024
 """
 import numpy as np
 import scipy.ndimage as ndi
 import scipy.linalg as la
+import scipy.stats as stats
+import scipy.optimize as sciop
 import concurrent.futures
 import matplotlib.pyplot as plt
 import copy
-
-# import cvxpy as cp
-import scipy.optimize as sciop
-
-import ForwardModels as fwd
-import Library as lib
-
-import time
-
-import scipy.stats as stats
 import emcee
 import multiprocessing as mp
 import corner
 
+import ForwardModels as fwd
+import Library as lib
+
+
+
 #Supress warnings for ill-conditioned matrices
+#Doesn't always work and I don't know why
 import warnings
 warnings.filterwarnings(action = 'ignore', module = 'la.LinAlgWarning')
 warnings.filterwarnings(action = 'ignore', module = 'la')
 
-###############################################################################
-#Global variables
+############################# Global variables ################################
 call_dict = {
     'fwd.RXDIF_2D_wAC': fwd.RXDIF_2D_wAC,
     'fwd.RXDIF_3D_wAC': fwd.RXDIF_3D_wAC,
     'fwd.OP_RXDIF_wAC': fwd.OP_RXDIF_wAC}
-###############################################################################
-# Internal use only
-def atleast_4d(arr):
+
+################################ Internal use #################################
+def _atleast_4d(arr):
     if arr.nidm < 4:
         return np.expand_dims(np.atleast_3d(arr),axis=3)
     else:
         return arr
-    
-def update_trx_params(curr_params, trx_params):
+
+def _update_trx_params(curr_params, trx_params):
     trx_params_new = copy.deepcopy(trx_params)
     trx_params_new['beta'] = np.array([curr_params['beta_a'], 
                                        curr_params['beta_c']])
     return trx_params_new
 
 #Required for jacobian building
-def getJScenarios(p_locator, curr_params, trx_params, delta, default_scenario):
+def _getJScenarios(p_locator, curr_params, trx_params, delta, default_scenario):
     scenarios = []
     for i, elem in enumerate(p_locator):
         temp = default_scenario.copy()
@@ -81,35 +78,33 @@ def getJScenarios(p_locator, curr_params, trx_params, delta, default_scenario):
             arr[elem[1]] = new
             temp['params'][elem[0]] = arr
             temp['dif'] = new - initial
-        temp['trx_params'] = update_trx_params(temp['params'], 
+        temp['trx_params'] = _update_trx_params(temp['params'], 
                                                default_scenario['trx_params'])
         scenarios.append(temp.copy())
         del temp
     return scenarios
 
-def getJColumn(scenario):
+def _getJColumn(scenario):
         N = call_dict[scenario['model']](scenario['N0'], scenario['params']['k'], 
                              scenario['params']['d'], scenario['params']['alpha'],
                              scenario['trx_params'], scenario['t_true'],
                              scenario['h'], scenario['dt'], scenario['bcs'])[0]
-        
         return N
     
-def checkBounds(new, old, bounds):
+def _checkBounds(new, old, bounds):
     if new < bounds[0]:
         new = old - (old - bounds[0])/2
     elif new > bounds[1]:
         new = old + (bounds[1] - old)/2
     return new
 
-def updateParams(calibrated, params):
+def _updateParams(calibrated, params):
     new_params = copy.deepcopy(params)
     for elem in new_params:
         new_params[elem].update(calibrated[elem].copy())
     return new_params
 
-###############################################################################
-#FOM LM calibration
+########################### FOM LM calibration ################################
 def calibrateRXDIF_LM(tumor, params, dt = 0.5, options = {}, parallel = False,
                       plot = False):
     """
@@ -178,7 +173,7 @@ def calibrateRXDIF_LM(tumor, params, dt = 0.5, options = {}, parallel = False,
         Mask = N0 + np.sum(np.atleast_3d(N_true),2)
     else:
         morph = ndi.generate_binary_structure(2, 1)
-        Mask = N0 + np.sum(atleast_4d(N_true),3)
+        Mask = N0 + np.sum(_atleast_4d(N_true),3)
     for i in range(2):
         Mask = ndi.binary_dilation(Mask, morph)
     
@@ -215,7 +210,7 @@ def calibrateRXDIF_LM(tumor, params, dt = 0.5, options = {}, parallel = False,
     num_p = len(p_locator)
     num_v = N_true.size    
     
-    trx_params = update_trx_params(curr, trx_params)
+    trx_params = _update_trx_params(curr, trx_params)
     N_guess = call_dict[model](N0, curr['k'], curr['d'], curr['alpha'],
                                trx_params, t_true, tumor['h'], dt, tumor['bcs'])[0]
     SSE = np.sum((N_guess - N_true)**2, axis = None) 
@@ -243,18 +238,18 @@ def calibrateRXDIF_LM(tumor, params, dt = 0.5, options = {}, parallel = False,
         if j_curr == options['j_freq']: #Build jacobian
             J = np.zeros([num_v, num_p])
             #Use parallel
-            all_scenarios = getJScenarios(p_locator, curr, trx_params,
+            all_scenarios = _getJScenarios(p_locator, curr, trx_params,
                                           options['delta'], default_scenario)
             if parallel:
                 with (concurrent.futures.ProcessPoolExecutor(max_workers = 12)
                       as executor):
-                    futures = executor.map(getJColumn, all_scenarios)
+                    futures = executor.map(_getJColumn, all_scenarios)
                     for i, output in enumerate(futures):
                         J[:,i] = np.reshape((output - N_guess)
                                             /all_scenarios[i]['dif'],(-1,))
             else:
                 for i, scenario in enumerate(all_scenarios):
-                    J[:,i] = np.reshape((getJColumn(scenario) - N_guess)
+                    J[:,i] = np.reshape((_getJColumn(scenario) - N_guess)
                                         /scenario['dif'],(-1,))
             j_curr = 0
             
@@ -268,17 +263,17 @@ def calibrateRXDIF_LM(tumor, params, dt = 0.5, options = {}, parallel = False,
         for i, elem in enumerate(p_locator):
             #Global param update
             if elem[1] == 0:
-                test[elem[0]] = checkBounds(test[elem[0]] + update[i],
+                test[elem[0]] = _checkBounds(test[elem[0]] + update[i],
                                             curr[elem[0]], elem[2])
             else:
-                test[elem[0]][elem[1]] = checkBounds(test[elem[0]][elem[1]]
+                test[elem[0]][elem[1]] = _checkBounds(test[elem[0]][elem[1]]
                                                      + update[i],
                                                      curr[elem[0]][elem[1]],
                                                      elem[2]).copy()  
     
         
         #Run with test parameters
-        trx_params_test = update_trx_params(test, trx_params)
+        trx_params_test = _update_trx_params(test, trx_params)
         N_test = call_dict[model](N0, test['k'], test['d'], test['alpha'],
                                   trx_params_test, t_true, tumor['h'], dt,
                                   tumor['bcs'])[0]
@@ -328,43 +323,18 @@ def calibrateRXDIF_LM(tumor, params, dt = 0.5, options = {}, parallel = False,
         ax[1,2].plot(range(iteration), stats['SSE_track'])
         ax[1,2].set_ylabel('SSE')
         
-    return updateParams(curr, params), stats
+    return _updateParams(curr, params), stats, model
 
-###############################################################################
-# Internal for ROM updating
-def getOperators(curr_params, ROM):
-    operators = {}
-    for elem in curr_params:
-        if elem == 'd':
-            operators['A'] = lib.interpolateGlobal(ROM['Library']['A'],
-                                                   curr_params[elem])
-        elif elem == 'k':
-            # print(curr_params[elem])
-            if curr_params[elem].size == 1:
-                operators['B'] = lib.interpolateGlobal(ROM['Library']['B'],
-                                                       curr_params[elem])
-                operators['H'] = lib.interpolateGlobal(ROM['Library']['H'],
-                                                       curr_params[elem])
-            else:
-                operators['B'] = lib.interpolateLocal(ROM['Library']['B'],
-                                                      curr_params[elem])
-                operators['H'] = lib.interpolateLocal(ROM['Library']['H'],
-                                                      curr_params[elem])
-        elif elem == 'alpha':
-            operators['T'] = lib.interpolateGlobal(ROM['Library']['T'], 
-                                                   curr_params[elem])
-    return operators
-
-def getJColumnROM(scenario):        
+######################### Internal use for ROM ################################
+def _getJColumnROM(scenario):        
     N = call_dict[scenario['model']](scenario['N0_r'], 
-                                     getOperators(scenario['params'], scenario['ROM']), 
+                                     lib.getOperators(scenario['params'], scenario['ROM']), 
                                      scenario['trx_params'], 
                                      scenario['t_true'], scenario['dt'])[0]
     
     return N
 
-def forceBounds(curr_param, V, bounds, coeff_bounds, x0 = None):
-    # start = time.time()
+def _forceBounds(curr_param, V, bounds, coeff_bounds, x0 = None):
     test = V @ curr_param
     if (len(np.nonzero((test < bounds[0]) & (abs(test) > 1e-6))) != 0 
         or len(np.nonzero(test > bounds[1])) != 0):
@@ -375,21 +345,6 @@ def forceBounds(curr_param, V, bounds, coeff_bounds, x0 = None):
         B = np.squeeze(np.concatenate((bounds[1]*np.ones([len(indices),1]),
                                        -1*bounds[0]*np.ones([len(indices),1])),
                                       axis = 0))
-        
-        ### CVXPY optimization test
-        # x = cp.Variable(V.shape[1])
-        # if x0 is None:
-        #     x.value = curr_param
-        # else:
-        #     x.value = x0    
-        # objective = cp.Minimize(cp.sum_squares(V@x - test))
-
-        # constraints = [A@x <= B, coeff_bounds[:,0] <= x, x <= coeff_bounds[:,1]]
-        # prob = cp.Problem(objective, constraints)
-        # prob.solve()
-        # curr_param = x.value.copy()
-        
-        ### scipy minimize
         if x0 is None:
             x0 =  np.mean(coeff_bounds, axis = 1)
             
@@ -398,12 +353,9 @@ def forceBounds(curr_param, V, bounds, coeff_bounds, x0 = None):
                                 x0, constraints = lincon, method = 'COBYLA')
         curr_param = result.x.copy()
         
-        # print('Linear solve time = ' + str(time.time() - start))
-        
     return curr_param
 
-###############################################################################
-#ROM LM calibration
+########################### ROM LM calibration ################################
 def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = False):
     """
     Calibrate parameters to the data in tumor based on assignments for parameters
@@ -481,7 +433,7 @@ def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = Fal
                 k_test[np.nonzero(np.abs(np.sum(ROM['V'],axis=1)) > 1e-6)] = k_target
                 k_r_test = np.squeeze(ROM['V'].T @ k_test)
 
-                k_r_test = forceBounds(k_r_test, ROM['V'], params[elem].getBounds(),
+                k_r_test = _forceBounds(k_r_test, ROM['V'], params[elem].getBounds(),
                                        params[elem].getCoeffBounds()).copy()
 
                 curr[elem] = k_r_test.copy()
@@ -510,8 +462,8 @@ def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = Fal
     num_p = len(p_locator)
     num_v = N_true_r.size
     
-    trx_params = update_trx_params(curr, trx_params)
-    ops = getOperators(curr, ROM)
+    trx_params = _update_trx_params(curr, trx_params)
+    ops = lib.getOperators(curr, ROM)
     N_guess_r = call_dict[model](N0_r, ops, trx_params, t_true, dt)[0]
     SSE = np.sum((N_guess_r - N_true_r)**2, axis = None) 
     
@@ -536,10 +488,10 @@ def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = Fal
         if j_curr == options['j_freq']: #Build jacobian
             J = np.zeros([num_v, num_p])
             #Use parallel
-            all_scenarios = getJScenarios(p_locator, curr, trx_params,
+            all_scenarios = _getJScenarios(p_locator, curr, trx_params,
                                           options['delta'], default_scenario)
             for i, scenario in enumerate(all_scenarios):
-                J[:,i] = np.reshape((getJColumnROM(scenario) - N_guess_r)
+                J[:,i] = np.reshape((_getJColumnROM(scenario) - N_guess_r)
                                     /scenario['dif'],(-1,))
             j_curr = 0
             
@@ -553,22 +505,22 @@ def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = Fal
         for i, elem in enumerate(p_locator):
             #Global param update
             if type(elem[1]) == int:
-                test[elem[0]] = checkBounds(test[elem[0]] + update[i],
+                test[elem[0]] = _checkBounds(test[elem[0]] + update[i],
                                             curr[elem[0]], elem[2])
             else:
                 new = test[elem[0]][elem[1]].copy() + update[i]
-                test[elem[0]][elem[1]] = checkBounds(new,
+                test[elem[0]][elem[1]] = _checkBounds(new,
                                                      curr[elem[0]][elem[1]].copy(),
                                                      elem[2])
         
         #Force all bounds for reduced parameters
         for elem in full_bounds:
-            test[elem] = forceBounds(test[elem], ROM['V'], full_bounds[elem],
+            test[elem] = _forceBounds(test[elem], ROM['V'], full_bounds[elem],
                                      coeff_bounds[elem], initial_guess[elem])
         
         #Run with test parameters
-        trx_params_test = update_trx_params(test, trx_params)
-        ops_test = getOperators(test, ROM)
+        trx_params_test = _update_trx_params(test, trx_params)
+        ops_test = lib.getOperators(test, ROM)
         N_test_r = call_dict[model](N0_r, ops_test, trx_params, t_true, dt)[0]
         SSE_test = np.sum((N_test_r - N_true_r)**2, axis = None) 
         
@@ -615,42 +567,10 @@ def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = Fal
         ax[1,2].plot(range(iteration), stats['SSE_track'])
         ax[1,2].set_ylabel('SSE')
             
-    return updateParams(curr, params), stats
+    return _updateParams(curr, params), stats, model
 
-###############################################################################
-# Internal for ROM - MCMC
-def generatePriors(params):
-    priors = {}
-    for elem in params:
-        if params[elem].assignment != 'f':
-            if elem == 'd':
-                priors['d'] = stats.truncnorm((params[elem].getBounds()[0] - 5e-4)/2.5e-4,
-                                              (params[elem].getBounds()[1] - 5e-4)/2.5e-4,
-                                              loc = 5e-4, scale = 2.5e-4)
-            if elem == 'alpha':
-                priors['alpha'] = stats.uniform(params[elem].getBounds()[0],
-                                                params[elem].getBounds()[1] 
-                                                - params[elem].getBounds()[0])
-            if elem == 'beta_a':
-                priors['beta_a'] = stats.truncnorm((params[elem].getBounds()[0] - 0.60)/0.0625,
-                                                   (params[elem].getBounds()[1] - 0.60)/0.0625,
-                                                   loc = 0.60, scale = 0.0625)
-            if elem == 'beta_c':
-                priors['beta_c'] = stats.truncnorm((params[elem].getBounds()[0] - 3.25)/0.5625,
-                                                   (params[elem].getBounds()[1] - 3.25)/0.5625,
-                                                   loc = 3.25, scale = 0.5625)
-            if elem == 'k':
-                if params[elem].assignment == 'g':
-                    priors['k'] = stats.uniform(params[elem].getBounds()[0],
-                                                params[elem].getBounds()[1] - params[elem].getBounds()[0])
-                elif params[elem].assignment == 'r':
-                    bounds = params[elem].getCoeffBounds()
-                    for j in range(bounds.shape[0]):
-                        priors['k'+str(j)] = stats.uniform(bounds[j,0],
-                                                           bounds[j,1] - bounds[j,0])
-    return priors
-
-def log_prior(p, priors, V, bounds, tol = 1+1e-2):
+######################### Internal use for MCMC ###############################
+def _log_prior(p, priors, V, bounds, tol = 1+1e-2):
     prior = 1
     names = []
     for elem in p:
@@ -666,32 +586,25 @@ def log_prior(p, priors, V, bounds, tol = 1+1e-2):
     for elem in names:
         recon = V@p[elem]
         indices = np.nonzero(abs(recon)>1e-3)[0]
-        if np.nonzero((recon[indices] < bounds[elem][0]/tol) | (recon[indices] > bounds[elem][1]*tol))[0].size != 0:
+        if (np.nonzero((recon[indices] < bounds[elem][0]/tol) 
+                       | (recon[indices] > bounds[elem][1]*tol))[0].size != 0):
             return -np.inf
     if prior == 0:
         return -np.inf
     else:
         return np.log(prior)
 
-def log_posterior(p, data):
-    # params = {}
-    # params['d'] = p[0]
-    # params['k'] = p[list([1,2,3,4,5])]
-    # params['alpha'] = p[6]
-    # params['beta_a'] = p[7]
-    # params['beta_c'] = p[8]
-    # p = copy.deepcopy(params)
-    
-    prior = log_prior(p, data['priors'], data['ROM']['V'], data['full_bounds'])
+def _log_posterior(p, data):
+    prior = _log_prior(p, data['priors'], data['ROM']['V'], data['full_bounds'])
     if not np.isfinite(prior):
         return -np.inf
     #Get operators from current p
     curr_params = copy.deepcopy(data['default_params'])
     for elem in p:
         curr_params[elem] = p[elem].copy()
-    ops = getOperators(curr_params, data['ROM'])
+    ops = lib.getOperators(curr_params, data['ROM'])
     trx_params = copy.deepcopy(data['trx_params'])
-    trx_params = update_trx_params(curr_params, trx_params)
+    trx_params = _update_trx_params(curr_params, trx_params)
     #Solve model
     sim = call_dict[data['model']](data['N0_r'], ops, trx_params, 
                                    data['t_true'], data['dt'])[0]
@@ -702,7 +615,7 @@ def log_posterior(p, data):
                        + np.log(curr_params['sigma']**2))
     return prior + ll
 
-def unpackChains(params, chains, p_locator):
+def _unpackChains(params, chains, p_locator):
     new_params = copy.deepcopy(params)
     for elem in new_params:
         for i, loc_elem in enumerate(p_locator):
@@ -712,8 +625,7 @@ def unpackChains(params, chains, p_locator):
                 
     return new_params
 
-###############################################################################
-#ROM MCMC calibration w/ Goodman Weare sampler
+########################## ROM gwMCMC calibration #############################
 def calibrateRXDIF_gwMCMC_ROM(tumor, ROM, params, priors, dt = 0.5,
                               options = {}, parallel = False, plot = False):
     """
@@ -839,7 +751,8 @@ def calibrateRXDIF_gwMCMC_ROM(tumor, ROM, params, priors, dt = 0.5,
                 for j in range(r):
                     temp[j] = priors[elem+str(j)].rvs()
                 #force initial guess to be within bounds
-                temp = forceBounds(temp, ROM['V'], full_bounds[elem], coeff_bounds[elem], x0 = None)
+                temp = _forceBounds(temp, ROM['V'], full_bounds[elem],
+                                    coeff_bounds[elem], x0 = None)
                 init[i, p_locator[elem]] = temp
     
     #Initialize and run sampler
@@ -849,22 +762,58 @@ def calibrateRXDIF_gwMCMC_ROM(tumor, ROM, params, priors, dt = 0.5,
     if parallel == True:
         with mp.Pool() as pool:
             # pool = mp.get_context('fork').Pool
-            sampler = emcee.EnsembleSampler(nwalkers, ndim, log_posterior, 
-                                            args = (data,), parameter_names = p_locator,  
+            sampler = emcee.EnsembleSampler(nwalkers, ndim, _log_posterior, 
+                                            args = (data,), 
+                                            parameter_names = p_locator,  
                                             pool = pool, moves = moves)
             sampler.run_mcmc(init, nsteps, thin_by = options['thin'], 
                              progress = options['progress'])
     else:
-        sampler = emcee.EnsembleSampler(nwalkers, ndim, log_posterior, 
-                                        args = (data,), parameter_names = p_locator, 
+        sampler = emcee.EnsembleSampler(nwalkers, ndim, _log_posterior, 
+                                        args = (data,), 
+                                        parameter_names = p_locator, 
                                         moves = moves)
         sampler.run_mcmc(init, nsteps, thin_by = options['thin'], 
                          progress = options['progress'])
         
     if plot:
         flat_samples = sampler.get_chain(flat=True)
-        corner.corner(flat_samples, labels = names, quantiles=[0.16, 0.5, 0.84], show_titles=True)
+        corner.corner(flat_samples, labels = names, 
+                      quantiles=[0.16, 0.5, 0.84], show_titles=True)
         
-    chains = sampler.get_chain(discard = int(np.ceil(options['burnin']*nsteps)), flat = True)
+    chains = sampler.get_chain(discard = int(np.ceil(options['burnin']*nsteps)) ,
+                               flat = True)
     
-    return unpackChains(params, chains, p_locator), sampler
+    return _unpackChains(params, chains, p_locator), sampler, data['model']
+
+######################## Priors for MCMC calibration ##########################
+def generatePriors(params):
+    priors = {}
+    for elem in params:
+        if params[elem].assignment != 'f':
+            if elem == 'd':
+                priors['d'] = stats.truncnorm((params[elem].getBounds()[0] - 5e-4)/2.5e-4,
+                                              (params[elem].getBounds()[1] - 5e-4)/2.5e-4,
+                                              loc = 5e-4, scale = 2.5e-4)
+            if elem == 'alpha':
+                priors['alpha'] = stats.uniform(params[elem].getBounds()[0],
+                                                params[elem].getBounds()[1] 
+                                                - params[elem].getBounds()[0])
+            if elem == 'beta_a':
+                priors['beta_a'] = stats.truncnorm((params[elem].getBounds()[0] - 0.60)/0.0625,
+                                                   (params[elem].getBounds()[1] - 0.60)/0.0625,
+                                                   loc = 0.60, scale = 0.0625)
+            if elem == 'beta_c':
+                priors['beta_c'] = stats.truncnorm((params[elem].getBounds()[0] - 3.25)/0.5625,
+                                                   (params[elem].getBounds()[1] - 3.25)/0.5625,
+                                                   loc = 3.25, scale = 0.5625)
+            if elem == 'k':
+                if params[elem].assignment == 'g':
+                    priors['k'] = stats.uniform(params[elem].getBounds()[0],
+                                                params[elem].getBounds()[1] - params[elem].getBounds()[0])
+                elif params[elem].assignment == 'r':
+                    bounds = params[elem].getCoeffBounds()
+                    for j in range(bounds.shape[0]):
+                        priors['k'+str(j)] = stats.uniform(bounds[j,0],
+                                                           bounds[j,1] - bounds[j,0])
+    return priors
