@@ -23,50 +23,6 @@ import numpy as np
 ###################### Reduce full sized operators ############################
 
 
-################ Internal for building reduced operators ######################
-def _getARow(ind, d, bcs, h):
-    if bcs.ndim == 3: #2D data input
-        sy,sx = bcs.shape[0:2]
-        n = sy*sx
-        bcs = np.reshape(bcs, (-1,2))
-    else: #3D data input
-        sy,sx,sz = bcs.shape[0:3]
-        n = sy*sx*sz 
-        bcs = np.reshape(bcs, (-1,3))
-        row_z = np.zeros([1,n])
-        
-    row = np.zeros([1,n])
-    row_x = np.zeros([1,n])
-    row_y = np.zeros([1,n])
-    #X - Direction boundaries
-    if bcs[ind,0] == 0:
-        row_x[[0,0,0],[ind-1, ind, ind+1]] = d * np.array([1, -2, 1]) / h[0]**2
-    elif bcs[ind,0] == -1:
-        row_x[[0,0],[ind, ind+1]] = d * np.array([-2, 2]) / h[0]**2
-    elif bcs[ind,0] == 1:
-        row_x[[0,0],[ind-1, ind]] = d * np.array([2, -2]) / h[0]**2
-    #Y - Direction boundaries
-    if bcs[ind,1] == 0:
-        row_y[[0,0,0],[ind-sx, ind, ind+sx]] = d * np.array([1, -2, 1]) / h[1]**2
-    elif bcs[ind,1] == -1:
-        row_y[[0,0],[ind, ind+sx]] = d * np.array([-2, 2]) / h[1]**2
-    elif bcs[ind,1] == 1:
-        row_y[[0,0],[ind-sx, ind]] = d * np.array([2, -2]) / h[1]**2
-    #Z - Direction boundaries - if applicable
-    if bcs.ndim == 4:
-        if bcs[ind,2] == 0:
-            row_z[[0,0,0],[ind-sx*sy, ind, ind+sx*sy]] = (d 
-                                                          * np.array([1, -2, 1]) 
-                                                          / h[2]**2)
-        elif bcs[ind,2] == -1:
-            row_z[[0,0],[ind, ind+sx*sy]] = d * np.array([-2, 2]) / h[2]**2
-        elif bcs[ind,2] == 1:
-            row_z[[0,0],[ind-sx*sy, ind]] = d * np.array([2, -2]) / h[2]**2
-        row += row_z
-    row += row_x + row_y
-        
-    return row
-
 #################### Build reduced operators directly #########################
 def buildReduced_A(V, tumor, d):
     """
@@ -180,3 +136,47 @@ def buildReduced_T(V, tumor, alpha):
           T_r += V[np.newaxis,i,:].T * (alpha * AUC[i]) @ V[np.newaxis,i,:]
       
       return T_r
+
+################ Internal for building reduced operators ######################
+def _getARow(ind, d, bcs, h):
+    if bcs.ndim == 3: #2D data input
+        sy,sx = bcs.shape[0:2]
+        n = sy*sx
+        bcs = np.reshape(bcs, (-1,2))
+    else: #3D data input
+        sy,sx,sz = bcs.shape[0:3]
+        n = sy*sx*sz 
+        bcs = np.reshape(bcs, (-1,3))
+        row_z = np.zeros([1,n])
+        
+    row = np.zeros([1,n])
+    row_x = np.zeros([1,n])
+    row_y = np.zeros([1,n])
+    #X - Direction boundaries
+    if bcs[ind,0] == 0:
+        row_x[[0,0,0],[ind-1, ind, ind+1]] = d * np.array([1, -2, 1]) / h[0]**2
+    elif bcs[ind,0] == -1:
+        row_x[[0,0],[ind, ind+1]] = d * np.array([-2, 2]) / h[0]**2
+    elif bcs[ind,0] == 1:
+        row_x[[0,0],[ind-1, ind]] = d * np.array([2, -2]) / h[0]**2
+    #Y - Direction boundaries
+    if bcs[ind,1] == 0:
+        row_y[[0,0,0],[ind-sx, ind, ind+sx]] = d * np.array([1, -2, 1]) / h[1]**2
+    elif bcs[ind,1] == -1:
+        row_y[[0,0],[ind, ind+sx]] = d * np.array([-2, 2]) / h[1]**2
+    elif bcs[ind,1] == 1:
+        row_y[[0,0],[ind-sx, ind]] = d * np.array([2, -2]) / h[1]**2
+    #Z - Direction boundaries - if applicable
+    if bcs.ndim == 4:
+        if bcs[ind,2] == 0:
+            row_z[[0,0,0],[ind-sx*sy, ind, ind+sx*sy]] = (d 
+                                                          * np.array([1, -2, 1]) 
+                                                          / h[2]**2)
+        elif bcs[ind,2] == -1:
+            row_z[[0,0],[ind, ind+sx*sy]] = d * np.array([-2, 2]) / h[2]**2
+        elif bcs[ind,2] == 1:
+            row_z[[0,0],[ind-sx*sy, ind]] = d * np.array([2, -2]) / h[2]**2
+        row += row_z
+    row += row_x + row_y
+        
+    return row

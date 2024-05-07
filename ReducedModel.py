@@ -17,59 +17,6 @@ import matplotlib.pyplot as plt
 
 import Library as lib
 
-########################## Augmentation functions #############################
-def _augmentAverage(tumor, depth):
-    """
-    Augments data by averaging the tumor NTC maps and applying a filter
-    Performs 'depth' averages on the dataset
-    """
-    N_aug = tumor['N']
-    if tumor['Mask'].ndim == 2:
-        mask = np.sum(N_aug,axis=2)
-        mask[mask > 0] = 1
-        for j in range(depth):
-            nt = N_aug.shape[2]
-            curr = 0;
-            for i in range(nt-1):
-                N_mid = (N_aug[:,:,i+curr] + N_aug[:,:,i+1+curr])/2
-                N_mid = np.squeeze(ndi.gaussian_filter(N_mid, 0.5))
-                N_aug = np.insert(N_aug,i+1+curr,N_mid,axis=2)
-                curr += 1
-        for i in range(N_aug.shape[2]):
-            temp = N_aug[:,:,i]
-            temp[mask!=1] = 0
-            N_aug[:,:,i] = temp
-        N_aug = np.reshape(N_aug, (-1,N_aug.shape[2]))
-        
-    else:
-        mask = np.sum(N_aug,axis=3)
-        mask[mask > 0] = 1
-        for j in range(depth):
-            nt = N_aug.shape[3]
-            curr = 0;
-            for i in range(nt-1):
-                N_mid = (N_aug[:,:,:,i+curr] + N_aug[:,:,:,i+1+curr])/2
-                N_mid = np.squeeze(ndi.gaussian_filter(N_mid, 0.5))
-                N_aug = np.insert(N_aug,i+1+curr,N_mid,axis=3)
-        for i in range(N_aug.shape[3]):
-            temp = N_aug[:,:,:,i]
-            temp[mask!=1] = 0
-            N_aug[:,:,:,i] = temp
-        N_aug = np.reshape(N_aug, (-1,N_aug.shape[3]))
-            
-    return N_aug
-    
-def _augmentSample(tumor, samples):
-    """
-    Augments data by simulating to final time of tumor['t_scan'] using parameters
-    contained in samples
-    
-    Need a way to pass in model and parameter formatting? We will probably need this anyway
-    """
-    N_aug = tumor['N']
-    
-    return N_aug
-
 ############################ Construct POD basis ##############################
 def getProjectionBasis(snapshots, r = 0):
     """
@@ -177,4 +124,57 @@ def visualizeBasis(ROM, shape):
         p = ax[i].imshow(mode)
         ax[i].set_title('Mode '+str(i+1))
         plt.colorbar(p,fraction=0.046, pad=0.04)
+
+##################### Internal augmentation functions #########################
+def _augmentAverage(tumor, depth):
+    """
+    Augments data by averaging the tumor NTC maps and applying a filter
+    Performs 'depth' averages on the dataset
+    """
+    N_aug = tumor['N']
+    if tumor['Mask'].ndim == 2:
+        mask = np.sum(N_aug,axis=2)
+        mask[mask > 0] = 1
+        for j in range(depth):
+            nt = N_aug.shape[2]
+            curr = 0;
+            for i in range(nt-1):
+                N_mid = (N_aug[:,:,i+curr] + N_aug[:,:,i+1+curr])/2
+                N_mid = np.squeeze(ndi.gaussian_filter(N_mid, 0.5))
+                N_aug = np.insert(N_aug,i+1+curr,N_mid,axis=2)
+                curr += 1
+        for i in range(N_aug.shape[2]):
+            temp = N_aug[:,:,i]
+            temp[mask!=1] = 0
+            N_aug[:,:,i] = temp
+        N_aug = np.reshape(N_aug, (-1,N_aug.shape[2]))
+        
+    else:
+        mask = np.sum(N_aug,axis=3)
+        mask[mask > 0] = 1
+        for j in range(depth):
+            nt = N_aug.shape[3]
+            curr = 0;
+            for i in range(nt-1):
+                N_mid = (N_aug[:,:,:,i+curr] + N_aug[:,:,:,i+1+curr])/2
+                N_mid = np.squeeze(ndi.gaussian_filter(N_mid, 0.5))
+                N_aug = np.insert(N_aug,i+1+curr,N_mid,axis=3)
+        for i in range(N_aug.shape[3]):
+            temp = N_aug[:,:,:,i]
+            temp[mask!=1] = 0
+            N_aug[:,:,:,i] = temp
+        N_aug = np.reshape(N_aug, (-1,N_aug.shape[3]))
+            
+    return N_aug
     
+def _augmentSample(tumor, samples):
+    """
+    Augments data by simulating to final time of tumor['t_scan'] using parameters
+    contained in samples
+    
+    Need a way to pass in model and parameter formatting? We will probably need this anyway
+    """
+    print('Not written yet')
+    N_aug = tumor['N']
+    
+    return N_aug    

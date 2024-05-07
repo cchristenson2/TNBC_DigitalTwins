@@ -83,59 +83,6 @@ def RXDIF_2D(N0, k, d, t, h, dt, bcs):
                 Sim[y,x,step] = Sim[y,x,step-1] + dt*(diffusion + proliferation)
                 
     return Sim[:,:,t_]
-
-################################ Internal prep ################################
-def _updateDosing(step, nt_trx, delivs, dt):
-    """
-    Parameters
-    ----------
-    step : TYPE
-        Current time index
-    nt_trx : ndarray
-        Indices of treatment times
-    delivs : ndarray
-        Contains time since deliveries that have occurred
-    dt : float
-        Euler time stepping
-
-    Returns
-    -------
-    Updated delivs
-
-    """
-    #Increment all current treatments by dt
-    if delivs.size > 0:
-        delivs = delivs + dt
-    if delivs.size < nt_trx.size:
-        if step - 1 >= nt_trx[delivs.size]: #Delivery occurred at previous step
-            delivs = np.append(delivs,0)  
-    return delivs
-  
-def _setupTRX(trx_params, nt, dt):
-    """
-    Decrease repeated definitions in each individual forward models
-    """
-    if np.isscalar(trx_params.get('beta')):
-        beta = np.array([trx_params.get('beta'), trx_params.get('beta')])
-    else:
-        beta = trx_params.get('beta')  
-        
-    #Setup treatment matrices
-    nt_trx = trx_params.get('t_trx') / dt #Indices of treatment times
-    delivs = np.array([]) #Storage for time since deliveries that have passed
-    drugs = np.zeros([2,nt])
-    
-    #Check if doses are specified
-    if 'doses' in trx_params:
-        #Check if each drug gets a different dosage at each time
-        doses = trx_params.get('doses')
-        if doses.ndim == 1:
-            doses = np.expand_dims(doses,1)
-            doses = np.append(doses,doses,1)
-    else: #All treatments get normalized dose of 1
-        doses = np.ones([nt_trx.size,2])  
-
-    return beta, nt_trx, delivs, drugs, doses        
             
 ############################ FDM based simulations ############################
 # Treatment included
@@ -181,6 +128,8 @@ def RXDIF_3D_wAC(N0, k, d, alpha, trx_params, t, h, dt, bcs):
         
     if np.isscalar(k):
         k = k*np.ones([sy,sx,sz])
+    if k.ndim != 3:
+        k = np.reshape(k, N0.shape)
         
     beta, nt_trx, delivs, drugs, doses = _setupTRX(trx_params, nt, dt)
 
@@ -292,6 +241,8 @@ def RXDIF_2D_wAC(N0, k, d, alpha, trx_params, t, h, dt, bcs):
         
     if np.isscalar(k):
         k = k*np.ones([sy,sx])
+    if k.ndim != 2:
+        k = np.reshape(k, N0.shape)
         
     beta, nt_trx, delivs, drugs, doses = _setupTRX(trx_params, nt, dt)
 
@@ -399,3 +350,56 @@ def OP_RXDIF_wAC(N0, ops, trx_params, t, dt):
                                             - (T[:,:,1]*drugs[1,step])@Sim[:,step-1])
             
     return Sim[:,t_], drugs
+
+################################ Internal prep ################################
+def _updateDosing(step, nt_trx, delivs, dt):
+    """
+    Parameters
+    ----------
+    step : TYPE
+        Current time index
+    nt_trx : ndarray
+        Indices of treatment times
+    delivs : ndarray
+        Contains time since deliveries that have occurred
+    dt : float
+        Euler time stepping
+
+    Returns
+    -------
+    Updated delivs
+
+    """
+    #Increment all current treatments by dt
+    if delivs.size > 0:
+        delivs = delivs + dt
+    if delivs.size < nt_trx.size:
+        if step - 1 >= nt_trx[delivs.size]: #Delivery occurred at previous step
+            delivs = np.append(delivs,0)  
+    return delivs
+  
+def _setupTRX(trx_params, nt, dt):
+    """
+    Decrease repeated definitions in each individual forward models
+    """
+    if np.isscalar(trx_params.get('beta')):
+        beta = np.array([trx_params.get('beta'), trx_params.get('beta')])
+    else:
+        beta = trx_params.get('beta')  
+        
+    #Setup treatment matrices
+    nt_trx = trx_params.get('t_trx') / dt #Indices of treatment times
+    delivs = np.array([]) #Storage for time since deliveries that have passed
+    drugs = np.zeros([2,nt])
+    
+    #Check if doses are specified
+    if 'doses' in trx_params:
+        #Check if each drug gets a different dosage at each time
+        doses = trx_params.get('doses')
+        if doses.ndim == 1:
+            doses = np.expand_dims(doses,1)
+            doses = np.append(doses,doses,1)
+    else: #All treatments get normalized dose of 1
+        doses = np.ones([nt_trx.size,2])  
+
+    return beta, nt_trx, delivs, drugs, doses        

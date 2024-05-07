@@ -49,61 +49,6 @@ call_dict = {
     'fwd.RXDIF_3D_wAC': fwd.RXDIF_3D_wAC,
     'fwd.OP_RXDIF_wAC': fwd.OP_RXDIF_wAC}
 
-################################ Internal use #################################
-def _atleast_4d(arr):
-    if arr.nidm < 4:
-        return np.expand_dims(np.atleast_3d(arr),axis=3)
-    else:
-        return arr
-
-def _update_trx_params(curr_params, trx_params):
-    trx_params_new = copy.deepcopy(trx_params)
-    trx_params_new['beta'] = np.array([curr_params['beta_a'], 
-                                       curr_params['beta_c']])
-    return trx_params_new
-
-#Required for jacobian building
-def _getJScenarios(p_locator, curr_params, trx_params, delta, default_scenario):
-    scenarios = []
-    for i, elem in enumerate(p_locator):
-        temp = default_scenario.copy()
-        temp['params'] = curr_params.copy()
-        if elem[1] == 0:
-            temp['params'][elem[0]] = temp['params'][elem[0]] * delta
-            temp['dif'] = temp['params'][elem[0]] - curr_params[elem[0]]
-        else:
-            arr = temp['params'][elem[0]].copy()
-            initial = arr[elem[1]]
-            new = arr[elem[1]].copy() * delta
-            arr[elem[1]] = new
-            temp['params'][elem[0]] = arr
-            temp['dif'] = new - initial
-        temp['trx_params'] = _update_trx_params(temp['params'], 
-                                               default_scenario['trx_params'])
-        scenarios.append(temp.copy())
-        del temp
-    return scenarios
-
-def _getJColumn(scenario):
-        N = call_dict[scenario['model']](scenario['N0'], scenario['params']['k'], 
-                             scenario['params']['d'], scenario['params']['alpha'],
-                             scenario['trx_params'], scenario['t_true'],
-                             scenario['h'], scenario['dt'], scenario['bcs'])[0]
-        return N
-    
-def _checkBounds(new, old, bounds):
-    if new < bounds[0]:
-        new = old - (old - bounds[0])/2
-    elif new > bounds[1]:
-        new = old + (bounds[1] - old)/2
-    return new
-
-def _updateParams(calibrated, params):
-    new_params = copy.deepcopy(params)
-    for elem in new_params:
-        new_params[elem].update(calibrated[elem].copy())
-    return new_params
-
 ########################### FOM LM calibration ################################
 def calibrateRXDIF_LM(tumor, params, dt = 0.5, options = {}, parallel = False,
                       plot = False):
@@ -325,36 +270,6 @@ def calibrateRXDIF_LM(tumor, params, dt = 0.5, options = {}, parallel = False,
         
     return _updateParams(curr, params), stats, model
 
-######################### Internal use for ROM ################################
-def _getJColumnROM(scenario):        
-    N = call_dict[scenario['model']](scenario['N0_r'], 
-                                     lib.getOperators(scenario['params'], scenario['ROM']), 
-                                     scenario['trx_params'], 
-                                     scenario['t_true'], scenario['dt'])[0]
-    
-    return N
-
-def _forceBounds(curr_param, V, bounds, coeff_bounds, x0 = None):
-    test = V @ curr_param
-    if (len(np.nonzero((test < bounds[0]) & (abs(test) > 1e-6))) != 0 
-        or len(np.nonzero(test > bounds[1])) != 0):
-        
-        indices = np.nonzero(abs(test)>1e-6)[0]
-        A = np.concatenate((V[np.s_[indices,:]], -1*V[np.s_[indices,:]]),
-                           axis = 0)
-        B = np.squeeze(np.concatenate((bounds[1]*np.ones([len(indices),1]),
-                                       -1*bounds[0]*np.ones([len(indices),1])),
-                                      axis = 0))
-        if x0 is None:
-            x0 =  np.mean(coeff_bounds, axis = 1)
-            
-        lincon = sciop.LinearConstraint(A, -np.inf, B)
-        result = sciop.minimize(lambda x: np.linalg.norm(V@x - test, ord = 2),
-                                x0, constraints = lincon, method = 'COBYLA')
-        curr_param = result.x.copy()
-        
-    return curr_param
-
 ########################### ROM LM calibration ################################
 def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = False):
     """
@@ -569,62 +484,6 @@ def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = Fal
             
     return _updateParams(curr, params), stats, model
 
-######################### Internal use for MCMC ###############################
-def _log_prior(p, priors, V, bounds, tol = 1+1e-2):
-    prior = 1
-    names = []
-    for elem in p:
-        if len(p[elem]) == 1:
-        # if p[elem].size == 1:
-            prior *= priors[elem].pdf(p[elem])
-        else:
-            names.append(elem)
-            for i in range(len(p[elem])):
-            # for i in range(p[elem].size):
-                prior *= priors[elem+str(i)].pdf(p[elem][i])           
-    # ensure reconstructed parameters are in bounds
-    for elem in names:
-        recon = V@p[elem]
-        indices = np.nonzero(abs(recon)>1e-3)[0]
-        if (np.nonzero((recon[indices] < bounds[elem][0]/tol) 
-                       | (recon[indices] > bounds[elem][1]*tol))[0].size != 0):
-            return -np.inf
-    if prior == 0:
-        return -np.inf
-    else:
-        return np.log(prior)
-
-def _log_posterior(p, data):
-    prior = _log_prior(p, data['priors'], data['ROM']['V'], data['full_bounds'])
-    if not np.isfinite(prior):
-        return -np.inf
-    #Get operators from current p
-    curr_params = copy.deepcopy(data['default_params'])
-    for elem in p:
-        curr_params[elem] = p[elem].copy()
-    ops = lib.getOperators(curr_params, data['ROM'])
-    trx_params = copy.deepcopy(data['trx_params'])
-    trx_params = _update_trx_params(curr_params, trx_params)
-    #Solve model
-    sim = call_dict[data['model']](data['N0_r'], ops, trx_params, 
-                                   data['t_true'], data['dt'])[0]
-    #Calculate likelihood
-    residuals = data['N_true_r'] - sim
-    ll = -0.5 * np.sum((residuals/curr_params['sigma'])**2 
-                       + np.log(2*np.pi) 
-                       + np.log(curr_params['sigma']**2))
-    return prior + ll
-
-def _unpackChains(params, chains, p_locator):
-    new_params = copy.deepcopy(params)
-    for elem in new_params:
-        for i, loc_elem in enumerate(p_locator):
-            if elem == loc_elem:
-                indices = p_locator[loc_elem]
-                new_params[elem].update(chains[:,indices].copy())
-                
-    return new_params
-
 ########################## ROM gwMCMC calibration #############################
 def calibrateRXDIF_gwMCMC_ROM(tumor, ROM, params, priors, dt = 0.5,
                               options = {}, parallel = False, plot = False):
@@ -817,3 +676,144 @@ def generatePriors(params):
                         priors['k'+str(j)] = stats.uniform(bounds[j,0],
                                                            bounds[j,1] - bounds[j,0])
     return priors
+
+################################ Internal use #################################
+def _atleast_4d(arr):
+    if arr.nidm < 4:
+        return np.expand_dims(np.atleast_3d(arr),axis=3)
+    else:
+        return arr
+
+def _update_trx_params(curr_params, trx_params):
+    trx_params_new = copy.deepcopy(trx_params)
+    trx_params_new['beta'] = np.array([curr_params['beta_a'], 
+                                       curr_params['beta_c']])
+    return trx_params_new
+
+#Required for jacobian building
+def _getJScenarios(p_locator, curr_params, trx_params, delta, default_scenario):
+    scenarios = []
+    for i, elem in enumerate(p_locator):
+        temp = default_scenario.copy()
+        temp['params'] = curr_params.copy()
+        if elem[1] == 0:
+            temp['params'][elem[0]] = temp['params'][elem[0]] * delta
+            temp['dif'] = temp['params'][elem[0]] - curr_params[elem[0]]
+        else:
+            arr = temp['params'][elem[0]].copy()
+            initial = arr[elem[1]]
+            new = arr[elem[1]].copy() * delta
+            arr[elem[1]] = new
+            temp['params'][elem[0]] = arr
+            temp['dif'] = new - initial
+        temp['trx_params'] = _update_trx_params(temp['params'], 
+                                               default_scenario['trx_params'])
+        scenarios.append(temp.copy())
+        del temp
+    return scenarios
+
+def _getJColumn(scenario):
+        N = call_dict[scenario['model']](scenario['N0'], scenario['params']['k'], 
+                             scenario['params']['d'], scenario['params']['alpha'],
+                             scenario['trx_params'], scenario['t_true'],
+                             scenario['h'], scenario['dt'], scenario['bcs'])[0]
+        return N
+    
+def _checkBounds(new, old, bounds):
+    if new < bounds[0]:
+        new = old - (old - bounds[0])/2
+    elif new > bounds[1]:
+        new = old + (bounds[1] - old)/2
+    return new
+
+def _updateParams(calibrated, params):
+    new_params = copy.deepcopy(params)
+    for elem in new_params:
+        new_params[elem].update(np.reshape(calibrated[elem].copy(),(-1)))
+    return new_params
+
+######################### Internal use for ROM ################################
+def _getJColumnROM(scenario):        
+    N = call_dict[scenario['model']](scenario['N0_r'], 
+                                     lib.getOperators(scenario['params'], scenario['ROM']), 
+                                     scenario['trx_params'], 
+                                     scenario['t_true'], scenario['dt'])[0]
+    
+    return N
+
+def _forceBounds(curr_param, V, bounds, coeff_bounds, x0 = None):
+    test = V @ curr_param
+    if (len(np.nonzero((test < bounds[0]) & (abs(test) > 1e-6))) != 0 
+        or len(np.nonzero(test > bounds[1])) != 0):
+        
+        indices = np.nonzero(abs(test)>1e-6)[0]
+        A = np.concatenate((V[np.s_[indices,:]], -1*V[np.s_[indices,:]]),
+                           axis = 0)
+        B = np.squeeze(np.concatenate((bounds[1]*np.ones([len(indices),1]),
+                                       -1*bounds[0]*np.ones([len(indices),1])),
+                                      axis = 0))
+        if x0 is None:
+            x0 =  np.mean(coeff_bounds, axis = 1)
+            
+        lincon = sciop.LinearConstraint(A, -np.inf, B)
+        result = sciop.minimize(lambda x: np.linalg.norm(V@x - test, ord = 2),
+                                x0, constraints = lincon, method = 'COBYLA')
+        curr_param = result.x.copy()
+        
+    return curr_param
+
+######################### Internal use for MCMC ###############################
+def _log_prior(p, priors, V, bounds, tol = 1+1e-2):
+    prior = 1
+    names = []
+    for elem in p:
+        if len(p[elem]) == 1:
+        # if p[elem].size == 1:
+            prior *= priors[elem].pdf(p[elem])
+        else:
+            names.append(elem)
+            for i in range(len(p[elem])):
+            # for i in range(p[elem].size):
+                prior *= priors[elem+str(i)].pdf(p[elem][i])           
+    # ensure reconstructed parameters are in bounds
+    for elem in names:
+        recon = V@p[elem]
+        indices = np.nonzero(abs(recon)>1e-3)[0]
+        if (np.nonzero((recon[indices] < bounds[elem][0]/tol) 
+                       | (recon[indices] > bounds[elem][1]*tol))[0].size != 0):
+            return -np.inf
+    if prior == 0:
+        return -np.inf
+    else:
+        return np.log(prior)
+
+def _log_posterior(p, data):
+    prior = _log_prior(p, data['priors'], data['ROM']['V'], data['full_bounds'])
+    if not np.isfinite(prior):
+        return -np.inf
+    #Get operators from current p
+    curr_params = copy.deepcopy(data['default_params'])
+    for elem in p:
+        curr_params[elem] = p[elem].copy()
+    ops = lib.getOperators(curr_params, data['ROM'])
+    trx_params = copy.deepcopy(data['trx_params'])
+    trx_params = _update_trx_params(curr_params, trx_params)
+    #Solve model
+    sim = call_dict[data['model']](data['N0_r'], ops, trx_params, 
+                                   data['t_true'], data['dt'])[0]
+    #Calculate likelihood
+    residuals = data['N_true_r'] - sim
+    ll = -0.5 * np.sum((residuals/curr_params['sigma'])**2 
+                       + np.log(2*np.pi) 
+                       + np.log(curr_params['sigma']**2))
+    return prior + ll
+
+def _unpackChains(params, chains, p_locator):
+    new_params = copy.deepcopy(params)
+    for elem in new_params:
+        for i, loc_elem in enumerate(p_locator):
+            if elem == loc_elem:
+                indices = p_locator[loc_elem]
+                new_params[elem].update(chains[:,indices].T.copy())
+                
+    return new_params

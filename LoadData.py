@@ -19,61 +19,112 @@ from scipy.interpolate import RegularGridInterpolator
 
 pack_dens = 0.7405
 cell_size = 4.189e-6
+    
+############################ Load .mat files ##################################
+# Load full resolution and downsample if requested
+def LoadTumor_mat(location, downsample = True, inplane = 4, inslice = 1, 
+                  crop2D = False, split = None):
+    """
+    Parameters
+    ----------
+    location : string
+        Data location in folder
+    downsample : boolean; default = True
+        Should the data be downsampled
+    inplane : float, optional; default = 4
+        Factor to reduce the in-plane resolution by
+    inslice : float, optional; default = 1
+        Factor to reduce the slice resolution by
+    crop2D : boolean, optional; default = False
+        Should the outputs be cropped to 2D at the center slice
+    split : integer, optional; default = None
+        Should NTC maps and scan info be split based on what has been "acquired"
+        If integer input is provided, the data after visit "split" is added to
+        seperate category in the tumor dictionary
 
-########### Internal load for restructuring data from MATLAB ##################
-def _loadmat(filename):
+    Returns
+    -------
+    tumor
+        dictionary containing all scan info needed for digital twins
     """
-    this function should be called instead of direct spio.loadmat
-    as it cures the problem of not properly recovering python dictionaries
-    from mat files. It calls the function check keys to cure all entries
-    which are still mat-objects
-    """
-    data = io.loadmat(filename, struct_as_record=False, squeeze_me=True)
-    return _check_keys(data)
-
-def _check_keys(dict):
-    """
-    checks if entries in dictionary are mat-objects. If yes
-    todict is called to change them to nested dictionaries
-    """
-    for key in dict:
-        if isinstance(dict[key], io.matlab.mat_struct):
-            dict[key] = _todict(dict[key])
-    return dict        
-
-def _todict(matobj):
-    """
-    A recursive function which constructs from matobjects nested dictionaries
-    """
-    dict = {}
-    for strg in matobj._fieldnames:
-        elem = matobj.__dict__[strg]
-        if isinstance(elem, io.matlab.mat_struct):
-            dict[strg] = _todict(elem)
+    data = _loadmat(location)
+    tumor = {}
+    
+    #Pull out treatment regimen info
+    sch = data['schedule_info']
+    times = sch['times']
+    times = np.cumsum(times)
+    times_labels = sch['schedule']
+    scan_times = times[times_labels=='S']
+    trx_times = times[times_labels==sch['drugtype']]
+    dimensions = sch['imagedims']
+    pcr = data['pcr']
+    
+    #Pull out and prep scan data
+    N = _stackNTC(data['full_res_dat'])
+    AUC = data['full_res_dat']['AUC']
+    Mask = data['full_res_dat']['BreastMask']
+    Tissues = data['full_res_dat']['Tissues']
+    
+    #Downsample
+    if downsample:
+        if N.ndim == 3:
+            N, AUC, Mask, Tissues, dimensions = downSample_2D(N, AUC, Mask, 
+                                                              Tissues, dimensions,
+                                                              inplane, inslice)
         else:
-            dict[strg] = elem
-    return dict
-
-def _stackNTC(dat):
-    """
-    Get all NTC maps and stack in order
-    Returns 3D array if 2D NTC maps or 4D array if 3D NTC maps
-    """
-    names = []
-    for key in dat.keys():
-        if 'NTC' in key:
-            names.append(key)
-         
-    names = sorted(names)
-    for key in names:
-        if 'NTCs' not in locals():
-            NTCs = dat[key]
-            NTCs = np.expand_dims(NTCs,NTCs.ndim)
+            N, AUC, Mask, Tissues, dimensions = downSample_3D(N, AUC, Mask, 
+                                                              Tissues, dimensions,
+                                                              inplane, inslice)
+    
+    #Convert to cell fraction
+    theta = pack_dens * np.prod(dimensions) / cell_size
+    N = N / theta
+    
+    #2D Crop
+    if crop2D:
+        s = int(round(N.shape[2]/2))-1
+        N = np.squeeze(N[:,:,s,:])
+        AUC = np.squeeze(AUC[:,:,s])
+        Mask = np.squeeze(Mask[:,:,s])
+        Tissues = np.squeeze(Tissues[:,:,s])
+        
+    #Build boundaries
+    if Mask.ndim == 2:
+        bcs = buildBoundaries_2D(Mask)
+    else:
+        bcs = buildBoundaries_3D(Mask)
+        
+    #Split data
+    if split != None:
+        if Mask.ndim == 2:
+            saved_N = N[:,:,split:]
+            N = np.delete(N,np.s_[split:],axis=2)
         else:
-            NTCs = np.append(NTCs, np.expand_dims(dat[key],NTCs.ndim - 1), 
-                             NTCs.ndim - 1)
-    return NTCs
-
+            saved_N = N[:,:,:,split:]
+            N = np.delete(N,np.s_[split:],axis=3)
+        saved_times = scan_times[split:]
+        scan_times = np.delete(scan_times,np.s_[split:],axis=0)
+        tumor['Future N'] = saved_N
+        tumor['Future t_scan'] = saved_times
+        
+    #Save in tumor
+    tumor['N'] = N
+    tumor['AUC'] = AUC
+    tumor['Mask'] = Mask
+    tumor['Tissues'] = Tissues
+    
+    tumor['bcs'] = bcs
+    
+    tumor['t_scan'] = scan_times
+    tumor['t_trx'] = trx_times
+    tumor['h'] = dimensions
+    tumor['pcr_status'] = pcr
+    
+    tumor['theta'] = theta
+    
+    return tumor
+ 
 ########################## Processing functions ###############################
 def downSample_2D(N, AUC, Mask, Tissues, h, inplane, inslice):
     """
@@ -251,109 +302,57 @@ def buildBoundaries_3D(Mask):
                             boundary[2] = 1
                     bcs[y,x,z,:] = boundary
     return bcs
-    
-############################ Load .mat files ##################################
-# Load full resolution and downsample if requested
-def LoadTumor_mat(location, downsample = True, inplane = 4, inslice = 1, 
-                  crop2D = False, split = None):
+   
+########### Internal load for restructuring data from MATLAB ##################
+def _loadmat(filename):
     """
-    Parameters
-    ----------
-    location : string
-        Data location in folder
-    downsample : boolean; default = True
-        Should the data be downsampled
-    inplane : float, optional; default = 4
-        Factor to reduce the in-plane resolution by
-    inslice : float, optional; default = 1
-        Factor to reduce the slice resolution by
-    crop2D : boolean, optional; default = False
-        Should the outputs be cropped to 2D at the center slice
-    split : integer, optional; default = None
-        Should NTC maps and scan info be split based on what has been "acquired"
-        If integer input is provided, the data after visit "split" is added to
-        seperate category in the tumor dictionary
+    this function should be called instead of direct spio.loadmat
+    as it cures the problem of not properly recovering python dictionaries
+    from mat files. It calls the function check keys to cure all entries
+    which are still mat-objects
+    """
+    data = io.loadmat(filename, struct_as_record=False, squeeze_me=True)
+    return _check_keys(data)
 
-    Returns
-    -------
-    tumor
-        dictionary containing all scan info needed for digital twins
+def _check_keys(dict):
     """
-    data = _loadmat(location)
-    tumor = {}
-    
-    #Pull out treatment regimen info
-    sch = data['schedule_info']
-    times = sch['times']
-    times = np.cumsum(times)
-    times_labels = sch['schedule']
-    scan_times = times[times_labels=='S']
-    trx_times = times[times_labels==sch['drugtype']]
-    dimensions = sch['imagedims']
-    pcr = data['pcr']
-    
-    #Pull out and prep scan data
-    N = _stackNTC(data['full_res_dat'])
-    AUC = data['full_res_dat']['AUC']
-    Mask = data['full_res_dat']['BreastMask']
-    Tissues = data['full_res_dat']['Tissues']
-    
-    #Downsample
-    if downsample:
-        if N.ndim == 3:
-            N, AUC, Mask, Tissues, dimensions = downSample_2D(N, AUC, Mask, 
-                                                              Tissues, dimensions,
-                                                              inplane, inslice)
+    checks if entries in dictionary are mat-objects. If yes
+    todict is called to change them to nested dictionaries
+    """
+    for key in dict:
+        if isinstance(dict[key], io.matlab.mat_struct):
+            dict[key] = _todict(dict[key])
+    return dict        
+
+def _todict(matobj):
+    """
+    A recursive function which constructs from matobjects nested dictionaries
+    """
+    dict = {}
+    for strg in matobj._fieldnames:
+        elem = matobj.__dict__[strg]
+        if isinstance(elem, io.matlab.mat_struct):
+            dict[strg] = _todict(elem)
         else:
-            N, AUC, Mask, Tissues, dimensions = downSample_3D(N, AUC, Mask, 
-                                                              Tissues, dimensions,
-                                                              inplane, inslice)
-    
-    #Convert to cell fraction
-    theta = pack_dens * np.prod(dimensions) / cell_size
-    N = N / theta
-    
-    #2D Crop
-    if crop2D:
-        s = int(round(N.shape[2]/2))-1
-        N = np.squeeze(N[:,:,s,:])
-        AUC = np.squeeze(AUC[:,:,s])
-        Mask = np.squeeze(Mask[:,:,s])
-        Tissues = np.squeeze(Tissues[:,:,s])
-        
-    #Build boundaries
-    if Mask.ndim == 2:
-        bcs = buildBoundaries_2D(Mask)
-    else:
-        bcs = buildBoundaries_3D(Mask)
-        
-    #Split data
-    if split != None:
-        if Mask.ndim == 2:
-            saved_N = N[:,:,split:]
-            N = np.delete(N,np.s_[split:],axis=2)
+            dict[strg] = elem
+    return dict
+
+def _stackNTC(dat):
+    """
+    Get all NTC maps and stack in order
+    Returns 3D array if 2D NTC maps or 4D array if 3D NTC maps
+    """
+    names = []
+    for key in dat.keys():
+        if 'NTC' in key:
+            names.append(key)
+         
+    names = sorted(names)
+    for key in names:
+        if 'NTCs' not in locals():
+            NTCs = dat[key]
+            NTCs = np.expand_dims(NTCs,NTCs.ndim)
         else:
-            saved_N = N[:,:,:,split:]
-            N = np.delete(N,np.s_[split:],axis=3)
-        saved_times = scan_times[split:]
-        scan_times = np.delete(scan_times,np.s_[split:],axis=0)
-        tumor['Future N'] = saved_N
-        tumor['Future t_scan'] = saved_times
-        
-    #Save in tumor
-    tumor['N'] = N
-    tumor['AUC'] = AUC
-    tumor['Mask'] = Mask
-    tumor['Tissues'] = Tissues
-    
-    tumor['bcs'] = bcs
-    
-    tumor['t_scan'] = scan_times
-    tumor['t_trx'] = trx_times
-    tumor['h'] = dimensions
-    tumor['pcr_status'] = pcr
-    
-    tumor['theta'] = theta
-    
-    return tumor
-    
+            NTCs = np.append(NTCs, np.expand_dims(dat[key],NTCs.ndim - 1), 
+                             NTCs.ndim - 1)
+    return NTCs
