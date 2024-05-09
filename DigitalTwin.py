@@ -15,11 +15,15 @@ Constists of:
     - assignment; f, l, or g for fixed, local, or global
     - value; default = None, replaced by either fixed value or calibration
 
-Last updated: 5/6/2024
+Last updated: 5/9/2024
 """
 import numpy as np
 import copy
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import matplotlib.colors as col
+import scipy.ndimage as ndi
+import scipy.stats as stats
 
 import LoadData as ld
 import ReducedModel as rm
@@ -183,7 +187,18 @@ class DigitalTwin:
                              ' "gwMCMC_ROM"')      
  
 ########################## Prediction and stats ###############################  
-    def predict(self, dt = 0.5, threshold = 0.0, plot = False, parallel = False):
+    def predict(self, dt = 0.5, threshold = 0.0, plot = False,
+                visualize = False, parallel = False):
+        """
+        Runs simulations for all parameter samples based off type of model and
+        calibration used. Plots if requested but always stores outputs in the
+        twin object for analysis.
+        Visualize creates either 2D or 3D plots of simulation vs measured data
+            3D used matplotlibs voxels which can be very slow
+        
+        Threshold determines cutoff level for cell identification; in 
+        volume fraction.
+        """
         #First check if parameters have values assigned
         for elem in self.params:
             if self.params[elem].value is None:
@@ -195,27 +210,49 @@ class DigitalTwin:
         if 'Future t_scan' in self.tumor:
             t = np.append(t, self.tumor['Future t_scan'])
             t_type_full = np.append(t_type_full, np.ones(self.tumor['Future t_scan'].shape))
+            pred_on = True
+        else:
+            pred_on = False
         t_ind = t[1:]/dt
         t_type = t_type_full[1:]
-        N_meas = self.tumor['N']
+        N_meas = self.tumor['N'].copy()
         if self.tumor['Mask'].ndim==2:
             N0 = self.tumor['N'][:,:,0]
+            N_cal = self.tumor['N'][:,:,1:]
+            N_cal = N_cal.reshape((-1,np.atleast_3d(N_cal).shape[2]))
             if 'Future N' in self.tumor:
+                N_pred = self.tumor['Future N'].copy()
+                N_pred = N_pred.reshape((-1,np.atleast_3d(N_pred).shape[2]))
                 N_meas = np.concatenate((N_meas, self.tumor['Future N']),axis = 2)
+            else:
+                N_pred = []
         else:
             N0 = self.tumor['N'][:,:,:,0]
+            N_cal = self.tumor['N'][:,:,:,1:]
+            N_cal = N_cal.reshape((-1,_atleast_4d(N_cal).shape[3]))
             if 'Future N' in self.tumor:
+                N_pred = self.tumor['Future N'].copy()
+                N_pred = N_pred.reshape((-1,_atleast_4d(N_pred).shape[3]))
                 N_meas = np.concatenate((N_meas, self.tumor['Future N']),axis = 3)
+            else:
+                N_pred = []
+        N_cal_r = self.ROM['ReducedTumor']['N_r'][:,1:]
+        if pred_on == True:
+            N_pred_r = self.ROM['ReducedTumor']['Future N_r']
+        else:
+            N_pred_r = []
         tspan = np.arange(0,t[-1]+dt,dt)
         default_trx_params = {'t_trx': self.tumor['t_trx']}
             
         parameters = self._unpackParameters()
         calibrations = []
         predictions = []
+        calibrations_r = []
+        predictions_r = []
         cell_tc = np.array([]).reshape(tspan.size,0)
         volume_tc = np.array([]).reshape(tspan.size,0)
         samples = len(parameters)
-        for i in range(len(parameters)):
+        for i in range(samples):
             curr = parameters[i]
             trx_params = default_trx_params.copy()
             trx_params = _update_trx_params(curr, default_trx_params)
@@ -226,11 +263,13 @@ class DigitalTwin:
                                                    tspan, self.tumor['h'], dt, 
                                                    self.tumor['bcs'])
                 if self.tumor['Mask'].ndim==2:
-                    cal = sim[:,:,int(t_ind[t_type==0])].reshape(-1,t_ind[t_type==0].size)
-                    pred = sim[:,:,int(t_ind[t_type==1])].reshape(-1,t_ind[t_type==1].size)
+                    calibrations.append(sim[:,:,t_ind[t_type==0].astype(int)].reshape(-1,t_ind[t_type==0].size))
+                    if pred_on == True:
+                        predictions.append(sim[:,:,t_ind[t_type==1].astype(int)].reshape(-1,t_ind[t_type==1].size))
                 else:
-                    cal = sim[:,:,:,int(t_ind[t_type==0])].reshape(-1,t_ind[t_type==0].size)
-                    pred = sim[:,:,:,int(t_ind[t_type==1])].reshape(-1,t_ind[t_type==1].size)
+                    calibrations.append(sim[:,:,:,t_ind[t_type==0].astype(int)].reshape(-1,t_ind[t_type==0].size))
+                    if pred_on == True:
+                        predictions.append(sim[:,:,:,t_ind[t_type==1].astype(int)].reshape(-1,t_ind[t_type==1].size))
                     temp1, temp2 = _maps_to_timecourse(sim, threshold, 
                                                        self.tumor['theta'], 
                                                        self.tumor['h'], 
@@ -239,47 +278,112 @@ class DigitalTwin:
                 N0 = self.ROM['ReducedTumor']['N_r'][:,0]
                 operators = lib.getOperators(curr,self.ROM)
                 sim, drugs = call_dict[self.model](N0, operators, trx_params, tspan, dt)
-                cal = self.ROM['V'] @ sim[:,int(t_ind[t_type==0])]
-                pred = self.ROM['V'] @ sim[:,int(t_ind[t_type==1])]
+                calibrations.append(self.ROM['V'] @ sim[:,t_ind[t_type==0].astype(int)])
+                calibrations_r.append(sim[:,t_ind[t_type==0].astype(int)])
+                if pred_on == True:
+                    predictions.append(self.ROM['V'] @ sim[:,t_ind[t_type==1].astype(int)])
+                    predictions_r.append(sim[:,t_ind[t_type==0].astype(int)])
                 temp1, temp2 = _maps_to_timecourse(sim, threshold, 
                                                    self.tumor['theta'], 
                                                    self.tumor['h'], 
                                                    reduced = True, V = self.ROM['V']) 
             cell_tc = np.concatenate((cell_tc, temp1), axis = 1)
             volume_tc = np.concatenate((volume_tc, temp2), axis = 1)
-            calibrations.append(cal)
-            predictions.append(pred)
         
         cell_measured, volume_measured = _maps_to_timecourse(N_meas, threshold, 
                                            self.tumor['theta'], self.tumor['h'], 
                                            reduced = False, V = None)
+        
         self.simulations = {'cell_tc': cell_tc, 'volume_tc': volume_tc,
-                            'maps_cal': calibrations, 'maps_pred': predictions, 
+                            'maps_cal': calibrations, 'maps_pred': predictions,
+                            'maps_r_cal': calibrations_r, 'maps_r_pred': predictions_r,
                             'cell_measured': cell_measured, 
-                            'volume_measured':volume_measured}
+                            'volume_measured':volume_measured,'prediction':pred_on,
+                            'N_cal':N_cal, 'N_pred':N_pred}
 
         #Plot outputs if requested - mean sample visualized if MCMC was used
-        if plot == True:
+        if visualize == True:
+            calibrations = np.squeeze(np.array(calibrations))
+            predictions = np.squeeze(np.array(predictions))
             if samples > 1:
-                mean_calibration = np.mean(np.array(calibrations), axis = 0)
-                mean_prediction = np.mean(np.array(predictions), axis = 0)
-            else:
-                mean_calibration = np.array(calibrations)
-                mean_prediction = np.array(predictions)
-            #Visualize volume and cell time courses compared to measured data
-            #Ignored for now, need to decide how to visualize best
-            # rows = mean_calibration.shape(mean_calibration.ndim-1) + mean_prediction.shape(mean_prediction.ndim-1)
-            # if self.tumor['Mask'].ndim == 2:
-            #     print(0)
-            # else:     
-            #     fig, ax = plt.subplots(rows, 3, subplot_kw={"projection": "3d"})
+                mean_calibration = np.mean(calibrations, axis = 0)
+                mean_prediction = np.mean(predictions, axis = 0)
                 
-            fig, ax = plt.subplots(2,1)
+                #Since we only have samples with ROM we can visualize the reduced coefficients here.
+                _visualize_MCMC_error(N_cal_r, N_pred_r, np.array(calibrations_r), np.array(predictions_r), pred_on, self.ROM, self.params)
+            else:
+                mean_calibration = calibrations
+                mean_prediction = predictions
+
+            # Visualize volume and cell time courses compared to measured data
+            if self.tumor['Mask'].ndim == 2:
+                _visualize_2d(N_cal, N_pred, mean_calibration, mean_prediction, pred_on, self.tumor)
+            else:     
+                _visualize_3d(N_cal, N_pred, mean_calibration, mean_prediction, pred_on, self.tumor, cut = 'axial')
+                _visualize_3d(N_cal, N_pred, mean_calibration, mean_prediction, pred_on, self.tumor, cut = 'sagittal')
+                    
+        if plot == True:
+            fig, ax = plt.subplots(2,1,layout = 'constrained')
             #Cell time course plot
-            _plotCI(ax[0], tspan, cell_tc, ['Time (days)', 'Cell Count'], t_type_full, t, cell_measured)
+            _plotCI(ax[0], tspan, cell_tc, ['Time (days)', 'Cell Count'],
+                    t_type_full, t, cell_measured)
             #Volume time course plot
-            _plotCI(ax[1], tspan, volume_tc, ['Time (days)', 'Volume (mm^3)'], t_type_full, t, volume_measured)
+            _plotCI(ax[1], tspan, volume_tc, ['Time (days)', 'Volume (mm^3)'],
+                    t_type_full, t, volume_measured)
             #Drug A and C plots need to write but not worried about it yet
+            
+    def simulationStats(self, threshold = 0.0):
+        """
+        Calculates the CCC, Dice, TTV, and TTC at each simulated time point
+        for both calibrations and predictions.
+        
+        Returns in separate dictionaries; calibrations_stats, prediction_stats
+        """
+        C0 = self.simulations['cell_measured'][0]
+        V0 = self.simulations['volume_measured'][0]
+        calibration_stats = {'CCC':[],'Dice':[],'delTTC':[],'delTTV':[]}
+        if self.simulations['prediction']==True:
+            prediction_stats = {'CCC':[],'Dice':[],'delTTC':[],'delTTV':[]}
+        for i in range(len(self.simulations['maps_cal'])):
+            curr_cal = self.simulations['maps_cal'][i]
+            n_cal = _atleast_2d(curr_cal).shape[1]
+            CCC = []
+            Dice = []
+            TTC = []
+            TTV = []
+            for j in range(n_cal):
+                out = getStats_SingleTime(_atleast_2d(curr_cal)[:,j], 
+                                          _atleast_2d(self.simulations['N_cal'])[:,j],
+                                          threshold, self.tumor['theta'],
+                                          self.tumor['h'])
+                CCC.append(out[0]), Dice.append(out[1])
+                TTC.append(out[2]), TTV.append(out[3])
+            calibration_stats['CCC'].append(CCC)
+            calibration_stats['Dice'].append(Dice)
+            calibration_stats['delTTC'].append(TTC - C0)
+            calibration_stats['delTTV'].append(TTV - V0)
+            if self.simulations['prediction']==True:
+                curr_pred = self.simulations['maps_pred'][i]
+                n_pred = _atleast_2d(curr_pred).shape[1]
+                CCC = []
+                Dice = []
+                TTC = []
+                TTV = []
+                for j in range(n_pred):
+                    out = getStats_SingleTime(_atleast_2d(curr_pred)[:,j], 
+                                              _atleast_2d(self.simulations['N_pred'])[:,j],
+                                              threshold, self.tumor['theta'],
+                                              self.tumor['h'])
+                    CCC.append(out[0]), Dice.append(out[1])
+                    TTC.append(out[2]), TTV.append(out[3])
+                prediction_stats['CCC'].append(CCC)
+                prediction_stats['Dice'].append(Dice)
+                prediction_stats['delTTC'].append(TTC - C0)
+                prediction_stats['delTTV'].append(TTV - V0)
+        if self.simulations['prediction']==True:
+            self.stats = {'calibration': calibration_stats,'prediction': prediction_stats}
+        else:
+            self.stats = {'calibration': calibration_stats,'prediction': []}
 
 ##################### Internal DigitalTwin functions ##########################  
     def _unpackParameters(self):
@@ -430,19 +534,46 @@ def _atleast_2d(arr):
         return arr
     
 def _atleast_4d(arr):
-    if arr.nidm < 4:
+    if arr.ndim < 4:
         return np.expand_dims(np.atleast_3d(arr),axis=3)
     else:
         return arr
     
-def CCC_calc(a, b):
-    return 0
+def CCC_overlap(a, b, threshold):
+    ind = np.nonzero((a>=threshold)&(b>=threshold))
+    a = a[ind]
+    b = b[ind]
+    mu_a = np.mean(a)
+    mu_b = np.mean(b)
+    cov = 0
+    vara = 0
+    varb = 0
+    n = a.size
+    for i in range(a.size):
+        cov += (a[i] - mu_a)*(b[i] - mu_b)
+        vara += (a[i] - mu_a)**2
+        varb += (b[i] - mu_b)**2
+    try:
+        return 2*(cov/n)/((vara/n)+(varb/n)+(mu_a - mu_b)**2)
+    except:
+        return 0
 
-def Dice_calc(a, b):
-    return 0
+def Dice_calc(a, b, threshold):
+    num_a = np.nonzero(a>=threshold)[0].size
+    num_b = np.nonzero(b>=threshold)[0].size
+    num_ab = np.nonzero((a>=threshold)&(b>=threshold))[0].size
+    try:
+        return 2*num_ab/(num_a + num_b)
+    except:
+        return 0
 
-def getStats_SingleTime(a, b):
-    return 0 
+def getStats_SingleTime(sim, meas, threshold, theta, h, ROM = False):
+    CCC = CCC_overlap(sim, meas, threshold)
+    Dice = Dice_calc(sim, meas, threshold)
+    TTC = np.sum(sim[sim>=threshold]) * theta
+    TTV = sim[sim>=threshold].size * np.prod(h)
+    
+    return CCC, Dice, TTC, TTV
 
 def _update_trx_params(curr_params, trx_params):
     trx_params_new = copy.deepcopy(trx_params)
@@ -465,12 +596,205 @@ def _maps_to_timecourse(maps, threshold, theta, h, reduced = False, V = None):
         volume_tc = np.append(volume_tc, temp[temp>=threshold].size * np.prod(h))
     return cell_tc.reshape((-1,1)), volume_tc.reshape((-1,1))
 
-# def _alphaToHex(n):
-#     string = '{0:x}'.format(round(n*255))
-#     if len(string) == 1:
-#         string = '0'+string
-#     return string
- 
+def _alphaToHex(n):
+    string = '{0:x}'.format(round(n*255))
+    if len(string) == 1:
+        string = '0'+string
+    return string
+
+def _centerMass(mat):
+    mat = mat / np.sum(mat)
+    com = []
+    shape = mat.shape
+    for i in range(len(shape)):
+        d = np.sum(mat,axis=i)
+        c = np.sum(d * np.arange(shape[i]))
+        com.append(c)
+    return com
+
+def _visualize_MCMC_error(N_cal_r, N_pred_r, calibrations_r, predictions_r, pred_on, ROM, params):
+    r = ROM['V'].shape[1]
+    rows = N_cal_r.shape[N_cal_r.ndim-1]
+    if pred_on == True:
+        rows += N_pred_r.shape[N_pred_r.ndim-1]
+    fig, ax = plt.subplots(rows, r, figsize = (r*2.5, rows*3.0), layout = "constrained")
+    for i in range(_atleast_2d(N_cal_r).shape[-1]):
+        for j in range(r):
+            curr = np.squeeze(calibrations_r[:,j,i]) - _atleast_2d(N_cal_r)[j,i]
+            _atleast_2d(ax)[i,j].hist(curr, bins = 20, density = True, label = 'Samples')
+            _atleast_2d(ax)[i,j].set_xlabel('Coefficient error')
+            _atleast_2d(ax)[i,j].set_aspect('auto')
+            if j == 0:
+                _atleast_2d(ax)[i,j].set_ylabel('Visit '+str(i+2))
+            if i == 0:
+                _atleast_2d(ax)[i,j].set_title('Mode '+str(j+1))
+            try:
+                #Get likelihood distribution if sigma is in params
+                s = params['sigma'].get()
+                _atleast_2d(ax)[i,j].plot(np.linspace(-3*s, 3*s, 1000), stats.norm.pdf(np.linspace(-3*s, 3*s, 1000), 0, s),'r--',label='Likelihood')
+            except:
+                pass
+            
+    if pred_on == True:
+        spacer = _atleast_2d(N_cal_r).shape[-1]
+        for i in range(_atleast_2d(N_pred_r).shape[-1]):
+            for j in range(r):
+                curr = np.squeeze(predictions_r[:,j,i]) - _atleast_2d(N_pred_r)[j,i]
+                _atleast_2d(ax)[i+spacer,j].hist(curr, bins = 20, density = True, label = 'Samples')
+                _atleast_2d(ax)[i+spacer,j].set_xlabel('Coefficient error')
+                _atleast_2d(ax)[i+spacer,j].set_aspect('auto')
+                if j == 0:
+                    _atleast_2d(ax)[i+spacer,j].set_ylabel('Visit '+str(i+2))
+                try:
+                    #Get likelihood distribution if sigma is in params
+                    s = params['sigma'].get()
+                    _atleast_2d(ax)[i+spacer,j].plot(np.linspace(-3*s, 3*s, 1000), stats.norm.pdf(np.linspace(-3*s, 3*s, 1000), 0, s),'r--',label='Likelihood')
+                except:
+                    pass
+    plt.tight_layout()
+            
+def _visualize_2d(N_cal, N_pred, calibration, prediction, pred_on, tumor):
+    rows = N_cal.shape[N_cal.ndim-1]
+    if pred_on == True:
+        rows += N_pred.shape[N_pred.ndim-1]
+    fig, ax = plt.subplots(rows, 3, layout = "constrained")
+    for i in range(_atleast_2d(N_cal).shape[-1]):
+        temp_N = _atleast_2d(N_cal)[:,i].reshape(tumor['Mask'].shape)
+        temp_sim = _atleast_2d(calibration)[:,i].reshape(tumor['Mask'].shape)
+        p = ax[i,0].imshow(temp_N, clim=(0,1),cmap='jet')
+        ax[i,0].set_ylabel('Visit '+str(i+2))
+        if i == 0:
+            ax[i,0].set_title('Measured')
+        ax[i,0].set_xticks([]), ax[i,0].set_yticks([])
+        plt.colorbar(p,fraction=0.046, pad=0.04)
+        p = ax[i,1].imshow(temp_sim, clim=(0,1),cmap='jet')
+        if i == 0:
+            ax[i,1].set_title('Simulation')
+        ax[i,1].set_xticks([]), ax[i,1].set_yticks([])
+        plt.colorbar(p,fraction=0.046, pad=0.04)
+        p = ax[i,2].imshow(temp_sim - temp_N, clim=(-1,1),cmap='jet')
+        if i == 0:
+            ax[i,2].set_title('Error')
+        ax[i,2].set_xticks([]), ax[i,2].set_yticks([])
+        plt.colorbar(p,fraction=0.046, pad=0.04)
+    if pred_on == True:
+        spacer = _atleast_2d(N_cal).shape[-1]
+        for i in range(_atleast_2d(N_pred).shape[-1]):
+            temp_N = _atleast_2d(N_pred)[:,i].reshape(tumor['Mask'].shape)
+            temp_sim = _atleast_2d(prediction)[:,i].reshape(tumor['Mask'].shape)
+            p = ax[i+spacer,0].imshow(temp_N, clim=(0,1),cmap='jet')
+            ax[i+spacer,0].set_ylabel('Visit '+str(i+2+spacer))
+            ax[i+spacer,0].set_xticks([]), ax[i+spacer,0].set_yticks([])
+            plt.colorbar(p,fraction=0.046, pad=0.04)
+            p = ax[i+spacer,1].imshow(temp_sim, clim=(0,1),cmap='jet')
+            ax[i+spacer,1].set_xticks([]), ax[i+spacer,1].set_yticks([])
+            plt.colorbar(p,fraction=0.046, pad=0.04)
+            p = ax[i+spacer,2].imshow(temp_sim - temp_N, clim=(-1,1),cmap='jet')
+            ax[i+spacer,2].set_xticks([]), ax[i+spacer,2].set_yticks([])
+            plt.colorbar(p,fraction=0.046, pad=0.04)
+        
+def _visualize_3d(N_cal, N_pred, calibration, prediction, pred_on, tumor, cut = 'axial'):
+    rows = N_cal.shape[N_cal.ndim-1]
+    if pred_on == True:
+        rows += N_pred.shape[N_pred.ndim-1]
+    fig, ax = plt.subplots(rows, 3, subplot_kw={"projection": "3d"}, layout = "constrained")
+    for i in range(_atleast_2d(N_cal).shape[-1]):
+        temp_N = _atleast_2d(N_cal)[:,i].reshape(tumor['Mask'].shape).copy()
+        temp_sim = _atleast_2d(calibration)[:,i].reshape(tumor['Mask'].shape).copy()
+        temp_mask = tumor['Mask'].copy()
+        # center = round(_centerMass(temp_N))
+        center = ndi.center_of_mass(temp_N)
+        if cut == 'axial':
+            temp_N[:,:,round(center[2]):] = 0
+            temp_sim[:,:,round(center[2]):] = 0
+            temp_sim[0,:,:] = 0
+            temp_mask[:,:,round(center[2]):] = 0
+        elif cut == 'sagittal':
+            temp_N[:,round(center[1]):,:] = 0
+            temp_sim[:,round(center[1]):,:] = 0
+            temp_sim[0,:,:] = 0
+            temp_mask[:,round(center[1]):,:] = 0
+            
+        if i == 0:
+            title_string = 'Measured'
+        else:
+            title_string = None   
+        voxelarray_tumor, colorarray_tumor, voxelarray_breast, colorarray_breast, sm = _getTumorInBreast(temp_N, temp_mask)
+        _plotVoxelArray(ax[i,0], voxelarray_tumor, colorarray_tumor, voxelarray_breast, colorarray_breast, sm, visit = i+2, title = title_string)
+        
+        if i == 0:
+            title_string = 'Simulated'
+        else:
+            title_string = None 
+        voxelarray_tumor, colorarray_tumor, voxelarray_breast, colorarray_breast, sm = _getTumorInBreast(temp_sim, temp_mask)
+        _plotVoxelArray(ax[i,1], voxelarray_tumor, colorarray_tumor, voxelarray_breast, colorarray_breast, sm, title = title_string)
+        
+        if i == 0:
+            title_string = 'Error'
+        else:
+            title_string = None 
+        voxelarray_tumor, colorarray_tumor, voxelarray_breast, colorarray_breast, sm = _getTumorInBreast(temp_sim - temp_N, temp_mask, clim = [-1,1])
+        _plotVoxelArray(ax[i,2], voxelarray_tumor, colorarray_tumor, voxelarray_breast, colorarray_breast, sm, title = title_string)
+    if pred_on == True:
+        spacer = _atleast_2d(N_cal).shape[-1]
+        for i in range(_atleast_2d(N_pred).shape[-1]):
+            temp_N = _atleast_2d(N_pred)[:,i].reshape(tumor['Mask'].shape).copy()
+            temp_sim = _atleast_2d(prediction)[:,i].reshape(tumor['Mask'].shape).copy()
+            temp_mask = tumor['Mask'].copy()
+            # center = round(_centerMass(temp_N))
+            center = ndi.center_of_mass(temp_N)
+            if cut == 'axial':
+                temp_N[:,:,round(center[2]):] = 0
+                temp_sim[:,:,round(center[2]):] = 0
+                temp_sim[0,:,:] = 0
+                temp_mask[:,:,round(center[2]):] = 0
+            elif cut == 'sagittal':
+                temp_N[:,round(center[1]):,:] = 0
+                temp_sim[:,round(center[1]):,:] = 0
+                temp_sim[0,:,:] = 0
+                temp_mask[:,round(center[1]):,:] = 0
+            voxelarray_tumor, colorarray_tumor, voxelarray_breast, colorarray_breast, sm = _getTumorInBreast(temp_N, temp_mask)
+            _plotVoxelArray(ax[i+spacer,0], voxelarray_tumor, colorarray_tumor, voxelarray_breast, colorarray_breast, sm, visit = i+2+spacer)
+            
+            voxelarray_tumor, colorarray_tumor, voxelarray_breast, colorarray_breast, sm = _getTumorInBreast(temp_sim, temp_mask)
+            _plotVoxelArray(ax[i+spacer,1], voxelarray_tumor, colorarray_tumor, voxelarray_breast, colorarray_breast, sm)
+            
+            voxelarray_tumor, colorarray_tumor, voxelarray_breast, colorarray_breast, sm = _getTumorInBreast(temp_sim - temp_N, temp_mask, clim = [-1,1])
+            _plotVoxelArray(ax[i+spacer,2], voxelarray_tumor, colorarray_tumor, voxelarray_breast, colorarray_breast, sm)
+        
+def _getTumorInBreast(curr, breast, clim = [0,1]):   
+    norm = col.Normalize(vmin = clim[0], vmax = clim[1])
+    sm = cm.ScalarMappable(norm = norm, cmap = 'jet')
+    color_map = sm.to_rgba(curr.reshape(-1)).reshape((breast.shape + (4,)))
+    tumor_colors = np.empty(curr.shape, dtype=object)
+    for i in range(curr.shape[0]):
+        for j in range(curr.shape[1]):
+            for k in range(curr.shape[2]):
+                tumor_colors[i,j,k] = col.rgb2hex(color_map[i,j,k,:-1]) + _alphaToHex(1.0)
+                
+    voxelarray_breast = np.array(np.array(breast, dtype=bool))
+    colorarray_breast = np.empty(voxelarray_breast.shape, dtype=object)
+    colorarray_breast[np.array(breast, dtype=bool)] = '#bfbfbf' + _alphaToHex(0.3)
+    
+    voxelarray_tumor = np.array(np.array(curr, dtype=bool))
+    colorarray_tumor = np.empty(voxelarray_tumor.shape, dtype=object)
+    colorarray_tumor[np.array(curr, dtype=bool)] = tumor_colors[np.array(curr, dtype=bool)]
+    return voxelarray_tumor, colorarray_tumor, voxelarray_breast, colorarray_breast, sm
+
+def _plotVoxelArray(ax, voxelarray_tumor, colorarray_tumor, voxelarray_breast, colorarray_breast, sm, visit = None, title = None):
+    light = col.LightSource(azdeg = 0, altdeg = 30)
+    ax.voxels(voxelarray_breast, facecolors = colorarray_breast, shade = True, lightsource = light)
+    ax.voxels(voxelarray_tumor, facecolors = colorarray_tumor, shade = True, lightsource = light)
+    if visit != None:
+        ax.set_zlabel('Visit '+str(visit))
+    if title != None:
+        ax.set_title(title)
+    ax.set_xticks([]), ax.set_yticks([]), ax.set_zticks([])
+    ax.azim = 60
+    ax.dist = 5
+    ax.set_aspect('equal')
+    plt.colorbar(sm, ax = ax,fraction=0.046, pad=0.04)
+    
 def _plotCI(ax, tspan, simulation, labels, t_type, t_meas, measured = None):
     if simulation.shape[1] != 1:
         #plot confidence interval stuff

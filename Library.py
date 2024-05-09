@@ -62,6 +62,8 @@ def getROMLibrary(tumor, V, bounds, num = 2, zipped = None):
         elif kind.lower() == 'l':
             Library[name] = _constructLocalLibrary(name, tumor, V,
                                                   bounds[param], num)
+    if not Library:
+        raise ValueError('I don''t know what is going wrong but library wasn''t built')
 
     return Library
 

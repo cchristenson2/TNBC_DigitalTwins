@@ -31,6 +31,7 @@ import copy
 import emcee
 import multiprocessing as mp
 import corner
+import pyabc as abc
 
 import ForwardModels as fwd
 import Library as lib
@@ -51,7 +52,7 @@ call_dict = {
 
 ########################### FOM LM calibration ################################
 def calibrateRXDIF_LM(tumor, params, dt = 0.5, options = {}, parallel = False,
-                      plot = False):
+                      plot = False, output = False):
     """
     Calibrate parameters to the data in tumor based on assignments for parameters
     For LM, tumor must have at least 2 data points
@@ -178,8 +179,9 @@ def calibrateRXDIF_LM(tumor, params, dt = 0.5, options = {}, parallel = False,
              'SSE_track': list([SSE])}
     
     while iteration <= options['max_it'] and SSE > options['e_tol']:    
-        if iteration % 10 == 0:
-            print('iteration '+str(iteration))
+        if output == True:
+            if iteration % 10 == 0:
+                print('iteration '+str(iteration))
         if j_curr == options['j_freq']: #Build jacobian
             J = np.zeros([num_v, num_p])
             #Use parallel
@@ -271,7 +273,7 @@ def calibrateRXDIF_LM(tumor, params, dt = 0.5, options = {}, parallel = False,
     return _updateParams(curr, params), stats, model
 
 ########################### ROM LM calibration ################################
-def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = False):
+def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = False, output = False):
     """
     Calibrate parameters to the data in tumor based on assignments for parameters
     For LM, tumor must have at least 2 data points
@@ -299,14 +301,12 @@ def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = Fal
             - j_freq: Successful parameter updates before jacobian updates.
     plot : boolean; default = true
         Should tracking variables be plot
-
     Returns
     -------
     params
         Updated list of parameters with calibrated values.
     stats
         Tracking variables from calibration
-
     """
     #Define options based on inputs and defaults
     options_fields = ['e_tol','e_conv','max_it','delta','pass','fail',
@@ -347,10 +347,8 @@ def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = Fal
                 k_test = np.zeros([n,1])
                 k_test[np.nonzero(np.abs(np.sum(ROM['V'],axis=1)) > 1e-6)] = k_target
                 k_r_test = np.squeeze(ROM['V'].T @ k_test)
-
                 k_r_test = _forceBounds(k_r_test, ROM['V'], params[elem].getBounds(),
                                        params[elem].getCoeffBounds()).copy()
-
                 curr[elem] = k_r_test.copy()
                 full_bounds[elem] = params[elem].getBounds()
                 coeff_bounds[elem] = params[elem].getCoeffBounds()
@@ -397,9 +395,10 @@ def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = Fal
              'k_track': list([curr['k'].copy()]),'Lambda_track': list([l]),
              'SSE_track': list([SSE])}
     
-    while iteration <= options['max_it'] and SSE > options['e_tol']:    
-        if iteration % 10 == 0:
-            print('iteration '+str(iteration))
+    while iteration <= options['max_it'] and SSE > options['e_tol']:  
+        if output == True:
+            if iteration % 10 == 0:
+                print('iteration '+str(iteration))
         if j_curr == options['j_freq']: #Build jacobian
             J = np.zeros([num_v, num_p])
             #Use parallel
@@ -519,7 +518,6 @@ def calibrateRXDIF_gwMCMC_ROM(tumor, ROM, params, priors, dt = 0.5,
         Updated list of parameters with calibrated values. Samples for each parameter
     sampler : emcee sampler object
         Used to check statistics after the calibration
-
     """
     options_fields = ['thin','progress','samples','burnin','step_size','walker_factor']
     default_options = [1,    False,       1000,     0.1    , 1.6       , 4]
@@ -541,7 +539,7 @@ def calibrateRXDIF_gwMCMC_ROM(tumor, ROM, params, priors, dt = 0.5,
     
     #Get size of ROM for reference
     n, r = ROM['V'].shape
-
+    
     #Get calibrated params for MCMC, bounds for reduced parameters, fixed parameters
     required_params = ['d','k','alpha','beta_a','beta_c','sigma']
     found_params = []
@@ -586,8 +584,7 @@ def calibrateRXDIF_gwMCMC_ROM(tumor, ROM, params, priors, dt = 0.5,
             if elem == 'sigma':
                 raise ValueError('Sigma must be fixed (non-zero) or calibrated for MCMC')
             else:
-                fixed_params[elem] = 0
-            
+                fixed_params[elem] = 0      
                 
     #Set data for passing into the log function. Stuff related to fixed parameters should be defined here
     #Data contains model, tumor info, timing, treatment details, default params dictionary with all fixed parameters
@@ -644,6 +641,17 @@ def calibrateRXDIF_gwMCMC_ROM(tumor, ROM, params, priors, dt = 0.5,
                                flat = True)
     
     return _unpackChains(params, chains, p_locator), sampler, data['model']
+
+########################### ROM pyABC calibration #############################
+def calibrateRXDIF_ABC_ROM(tumor, ROM, params, priors, dt = 0.5,
+                              options = {}, parallel = False, plot = False):
+    print(0)
+    #Prep measured data and get simulation details
+    
+    #Get what parameters are calibrated and how they are calibrated
+    
+    #Get priors definition, multivariate prior constrained by reconstructed k
+
 
 ######################## Priors for MCMC calibration ##########################
 def generatePriors(params):
@@ -817,3 +825,8 @@ def _unpackChains(params, chains, p_locator):
                 new_params[elem].update(chains[:,indices].T.copy())
                 
     return new_params
+
+######################### Internal use for pyABC ##############################
+class ConstrainedPrior(abc.DistributionBase):
+    def __init__(self,priors):
+        return  0

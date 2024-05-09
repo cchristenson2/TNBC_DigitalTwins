@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 
 if __name__ == '__main__':
     #Set paths
-    home = os.path.dirname(os.getcwd())
+    home = os.path.dirname(os.path.dirname(os.getcwd()))
     datapath = home + '\Data\PatientData_ungrouped\\'
     #Get tumor information in folder
     files = os.listdir(datapath)
