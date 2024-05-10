@@ -614,7 +614,7 @@ def calibrateRXDIF_gwMCMC_ROM(tumor, ROM, params, priors, dt = 0.5,
     #Initialize and run sampler
     nsteps = int(np.ceil(options['samples']/nwalkers))
     s = options['step_size']
-    moves = [(emcee.moves.StretchMove(s), 0.8), (emcee.moves.DEMove(), 0.2)]
+    moves = [(emcee.moves.StretchMove(s), 0.8), (emcee.moves.WalkMove(), 0.2)]
     if parallel == True:
         with mp.Pool() as pool:
             # pool = mp.get_context('fork').Pool
@@ -622,29 +622,34 @@ def calibrateRXDIF_gwMCMC_ROM(tumor, ROM, params, priors, dt = 0.5,
                                             args = (data,), 
                                             parameter_names = p_locator,  
                                             pool = pool, moves = moves)
-            sampler.run_mcmc(init, nsteps, thin_by = options['thin'], 
-                             progress = options['progress'])
+            sampler.run_mcmc(init, nsteps, progress = options['progress'])
     else:
         sampler = emcee.EnsembleSampler(nwalkers, ndim, _log_posterior, 
                                         args = (data,), 
                                         parameter_names = p_locator, 
                                         moves = moves)
-        sampler.run_mcmc(init, nsteps, thin_by = options['thin'], 
-                         progress = options['progress'])
-        
+        sampler.run_mcmc(init, nsteps, progress = options['progress'])
+         
     if plot:
-        flat_samples = sampler.get_chain(flat=True)
-        corner.corner(flat_samples, labels = names, 
-                      quantiles=[0.16, 0.5, 0.84], show_titles=True)
+        # flat_samples = sampler.get_chain(flat=True)
+        # corner.corner(flat_samples, labels = names, 
+        #               quantiles=[0.16, 0.5, 0.84], show_titles=True)
+        fig, ax = plt.subplots(ndim, 1, figsize = (8, ndim), layout = 'constrained')
+        full_chains = sampler.get_chain()
+        for i in range(ndim):
+            for j in range(nwalkers):
+                ax[i].plot(np.squeeze(full_chains[:,j,i]),color = (0,0,0,0.2))
+                ax[i].set_ylabel(names[i])
+                ax[i].set_xlabel('Step')
         
     chains = sampler.get_chain(discard = int(np.ceil(options['burnin']*nsteps)) ,
-                               flat = True)
+                               thin = options['thin'], flat = True)
     
     return _unpackChains(params, chains, p_locator), sampler, data['model']
 
 ########################### ROM pyABC calibration #############################
 def calibrateRXDIF_ABC_ROM(tumor, ROM, params, priors, dt = 0.5,
-                              options = {}, parallel = False, plot = False):
+                              options = {}, plot = False):
     print(0)
     #Prep measured data and get simulation details
     
@@ -737,7 +742,10 @@ def _checkBounds(new, old, bounds):
 def _updateParams(calibrated, params):
     new_params = copy.deepcopy(params)
     for elem in new_params:
-        new_params[elem].update(np.reshape(calibrated[elem].copy(),(-1)))
+        try:
+            new_params[elem].update(np.reshape(calibrated[elem].copy(),(-1)))
+        except:
+            new_params[elem].update(np.reshape(calibrated[elem],(-1)))
     return new_params
 
 ######################### Internal use for ROM ################################
@@ -827,6 +835,31 @@ def _unpackChains(params, chains, p_locator):
     return new_params
 
 ######################### Internal use for pyABC ##############################
-class ConstrainedPrior(abc.DistributionBase):
+class _ConstrainedPrior(abc.DistributionBase):
     def __init__(self,priors):
+        for elem in priors:
+            print(0)
+            
         return  0
+    
+    def rvs(self, *args, **kwargs):
+        return 0
+    
+    def pdf(self, x):
+        return 0
+    
+def _create_model(data):
+    def model(p):
+        curr_params = copy.deepcopy(data['default_params'])
+        for elem in p:
+            curr_params[elem] = p[elem].copy()
+        ops = lib.getOperators(curr_params, data['ROM'])
+        trx_params = copy.deepcopy(data['trx_params'])
+        trx_params = _update_trx_params(curr_params, trx_params)
+        sim = call_dict[data['model']](data['N0_r'], ops, trx_params, 
+                                       data['t_true'], data['dt'])[0]
+        return {'data':sim}
+        
+def _distance(x, y):
+    return np.sum((x['data'] - y['data'])**2)
+

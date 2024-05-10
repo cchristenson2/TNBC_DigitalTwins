@@ -252,7 +252,8 @@ class DigitalTwin:
         cell_tc = np.array([]).reshape(tspan.size,0)
         volume_tc = np.array([]).reshape(tspan.size,0)
         samples = len(parameters)
-        for i in range(samples):
+        if samples == 1:
+            i = 0
             curr = parameters[i]
             trx_params = default_trx_params.copy()
             trx_params = _update_trx_params(curr, default_trx_params)
@@ -289,7 +290,28 @@ class DigitalTwin:
                                                    reduced = True, V = self.ROM['V']) 
             cell_tc = np.concatenate((cell_tc, temp1), axis = 1)
             volume_tc = np.concatenate((volume_tc, temp2), axis = 1)
-        
+        else:
+            #More than 1 sample, we know the problem was ROM with MCMC
+            #We also need to parallelize this whole loop somehow
+            for i in range(samples):
+                curr = parameters[i]
+                trx_params = default_trx_params.copy()
+                trx_params = _update_trx_params(curr, default_trx_params)
+                N0 = self.ROM['ReducedTumor']['N_r'][:,0]
+                operators = lib.getOperators(curr,self.ROM)
+                sim, drugs = call_dict[self.model](N0, operators, trx_params, tspan, dt)
+                calibrations.append(self.ROM['V'] @ sim[:,t_ind[t_type==0].astype(int)])
+                calibrations_r.append(sim[:,t_ind[t_type==0].astype(int)])
+                if pred_on == True:
+                    predictions.append(self.ROM['V'] @ sim[:,t_ind[t_type==1].astype(int)])
+                    predictions_r.append(sim[:,t_ind[t_type==0].astype(int)])
+                temp1, temp2 = _maps_to_timecourse(sim, threshold, 
+                                                   self.tumor['theta'], 
+                                                   self.tumor['h'], 
+                                                   reduced = True, V = self.ROM['V']) 
+                cell_tc = np.concatenate((cell_tc, temp1), axis = 1)
+                volume_tc = np.concatenate((volume_tc, temp2), axis = 1)
+            
         cell_measured, volume_measured = _maps_to_timecourse(N_meas, threshold, 
                                            self.tumor['theta'], self.tumor['h'], 
                                            reduced = False, V = None)
@@ -384,6 +406,43 @@ class DigitalTwin:
             self.stats = {'calibration': calibration_stats,'prediction': prediction_stats}
         else:
             self.stats = {'calibration': calibration_stats,'prediction': []}
+            
+########################### Plotting parameters ###############################
+#Only set up for MCMC based parameters right now
+    def paramVisualization(self):
+        parameters = self._unpackParameters()
+        samples = len(parameters)
+        if samples > 1:
+            num = 0
+            for elem in self.params:
+                if self.params[elem].assignment.lower() == 'g':
+                    num += 1
+                elif self.params[elem].assignment.lower() == 'r':
+                    num += self.ROM['V'].shape[1]
+            fig, ax = plt.subplots(1, num, layout = "constrained", figsize = (num*2,6))
+            offset = 0
+            for i, elem in enumerate(self.params):
+                if self.params[elem].assignment.lower() == 'g':
+                    ax[i+offset].hist(self.params[elem].get().reshape(-1), bins = 20, density = True, label = 'Samples')
+                    ax[i+offset].set_title(elem)
+                    try:
+                        x = np.linspace(self.params[elem].getBounds()[0], self.params[elem].getBounds()[1], 100)
+                        y = self.priors[elem].pdf(x)
+                        ax[i+offset].plot(x,y,'r--',label='Prior')
+                    except:
+                        pass
+                elif self.params[elem].assignment.lower() == 'r':
+                    for j in range(self.ROM['V'].shape[1]):
+                        ax[i+offset].hist(self.params[elem].get()[j,:], bins = 20, density = True, label = 'Samples')
+                        ax[i+offset].set_title(elem + str(j))
+                        try:
+                            x = np.linspace(self.params[elem].getCoeffBounds()[j,0], self.params[elem].getCoeffBounds()[j,1], 100)
+                            y = self.priors[elem + str(j)].pdf(x)
+                            ax[i+offset].plot(x,y,'r--',label='Prior')
+                        except:
+                            pass
+                        if j < self.ROM['V'].shape[1] - 1:
+                            offset += 1
 
 ##################### Internal DigitalTwin functions ##########################  
     def _unpackParameters(self):
@@ -422,7 +481,7 @@ class Parameter:
     def __init__(self, name, assignment, value = None):
         valid_names = ['d','k','alpha','beta_a','beta_c','sigma']
         valid_assignment = ['f','l','g']
-        default_values = [5e-3, 0.05, 0.4, 0.60, 3.25, 0.0]
+        default_values = [5e-4, 0.05, 0.4, 0.60, 3.25, 0.0]
         
         #Store name of parameter
         if name.lower() in valid_names:
@@ -521,6 +580,9 @@ class ReducedParameter:
     
     def getBounds(self):
         return self.bounds 
+    
+    def reconstruct(self):
+        return self.basis @ self.value
     
     def delete(self):
         self.value = None        
@@ -798,17 +860,17 @@ def _plotVoxelArray(ax, voxelarray_tumor, colorarray_tumor, voxelarray_breast, c
 def _plotCI(ax, tspan, simulation, labels, t_type, t_meas, measured = None):
     if simulation.shape[1] != 1:
         #plot confidence interval stuff
-        mean_sim = np.mean(simulation, axis = 1)
+        median_sim = np.median(simulation, axis = 1)
         prctile = np.percentile(simulation, [1,99,25,75], axis = 1)
         ax.fill_between(tspan,prctile[0,:],prctile[1,:],color=[0,0,1,0.1],
                         label='Simulation - range',zorder=1)
         ax.fill_between(tspan,prctile[2,:],prctile[3,:],color=[0,0,1,0.5],
                         label='Simulation - IQR',zorder=2)
-        line_label = 'Simulation - mean'
+        line_label = 'Simulation - median'
     else:
-        mean_sim = simulation
+        median_sim = simulation
         line_label = 'Simulation'
-    ax.plot(tspan, mean_sim, 'b-', linewidth = 1,label=line_label,zorder=3)
+    ax.plot(tspan,  median_sim, 'b-', linewidth = 1,label=line_label,zorder=3)
     if measured is not None:
         ax.scatter(t_meas, measured, color = 'k', label = 'Measured',zorder=4)
     
@@ -819,10 +881,10 @@ def _plotCI(ax, tspan, simulation, labels, t_type, t_meas, measured = None):
         limits = ax.get_ybound()
         ax.arrow(point+0.5,limits[0] + limits[1]*0.03, 1, 0, color = 'r',head_width = limits[1]*0.05, head_length = 0.5, length_includes_head = True,zorder=6)
         ax.arrow(point+0.5,limits[1] - limits[1]*0.03, 1, 0, color = 'r',head_width = limits[1]*0.05, head_length = 0.5, length_includes_head = True,zorder=6)
-        if _findNearest(limits,np.mean(measured)) == 0:
-            ax.text(point+2.0,limits[0] + limits[1]*0.03 - limits[1]*0.025, 'Prediction', color = 'r', fontsize = 'xx-small',zorder=7)
+        if _findNearest(limits,np.mean(median_sim)) == 0:
+            ax.text(point+2.0,limits[1] - limits[1]*0.03 - limits[1]*0.025, 'Prediction', color = 'r', fontsize = 'xx-small',zorder=7)
         else:
-            ax.text(point+2.0,limits[1] - limits[1]*0.03 - limits[1]*0.025 , 'Prediction', color = 'r', fontsize = 'xx-small',zorder=7)
+            ax.text(point+2.0,limits[0] + limits[1]*0.03 - limits[1]*0.025 , 'Prediction', color = 'r', fontsize = 'xx-small',zorder=7)
         
     ax.legend(fontsize='xx-small')
     ax.set_xlabel(labels[0])
