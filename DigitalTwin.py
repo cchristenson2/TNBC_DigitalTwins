@@ -15,7 +15,7 @@ Constists of:
     - assignment; f, l, or g for fixed, local, or global
     - value; default = None, replaced by either fixed value or calibration
 
-Last updated: 5/9/2024
+Last updated: 5/23/2024
 """
 import numpy as np
 import copy
@@ -24,6 +24,10 @@ import matplotlib.cm as cm
 import matplotlib.colors as col
 import scipy.ndimage as ndi
 import scipy.stats as stats
+import concurrent.futures
+from itertools import repeat
+import time
+import os
 
 import LoadData as ld
 import ReducedModel as rm
@@ -37,11 +41,14 @@ call_dict = {
     'fwd.RXDIF_3D_wAC': fwd.RXDIF_3D_wAC,
     'fwd.OP_RXDIF_wAC': fwd.OP_RXDIF_wAC}
 
+if __name__ == '__main__':
+    print('main')
+
 ###############################################################################
 ###############################################################################
 ######################### Digital twin definition #############################
 class DigitalTwin:
-    def __init__(self, location, load_args = {}, ROM = False, ROM_args = {}, params = None):
+    def __init__(self, location, load_args = {}, ROM = False, ROM_args = {}, params = None, insilico = False):
         """
         Parameters
         ----------
@@ -60,7 +67,10 @@ class DigitalTwin:
                                    samples = None
             
         """
-        self.tumor = ld.LoadTumor_mat(location, **load_args)
+        if insilico != True:
+            self.tumor = ld.LoadTumor_mat(location, **load_args)
+        else:
+            self.tumor = ld.LoadInsilicoTumor_mat(location, **load_args)
         self.params = params
         if ROM:
             if ROM_args:
@@ -151,19 +161,17 @@ class DigitalTwin:
                                 options: {'thin','progress','samples',
                                           'burnin','step_size','walker_factor'}
         """
-        valid_cal = ['LM_FOM', 'LM_ROM', 'gwMCMC_ROM']
+        valid_cal = ['LM_FOM', 'LM_ROM', 'gwMCMC_ROM', 'ABC_ROM']
         if cal_type in valid_cal:
             if cal_type == 'LM_FOM':
-                self.params, self.cal_stats, self.model = \
+                self.params, self.cal_stats, self.model , _= \
                     cal.calibrateRXDIF_LM(self.tumor, self.params, **cal_args)
-                self.cal_type = 'LM'
             else:
                 if hasattr(self, 'ROM'):
                     if cal_type == 'LM_ROM':
-                        self.params, self.cal_stats, self.model = \
+                        self.params, self.cal_stats, self.model , _ = \
                             cal.calibrateRXDIF_LM_ROM(self.tumor, self.ROM, 
                                                       self.params, **cal_args)
-                        self.cal_type = 'LM'
                     else:
                         if hasattr(self, 'priors'):
                             if cal_type == 'gwMCMC_ROM':
@@ -173,7 +181,14 @@ class DigitalTwin:
                                                                   self.params, 
                                                                   self.priors, 
                                                                   **cal_args)
-                                self.cal_type = 'Bayes'
+                            elif cal_type == 'ABC_ROM':
+                                self.params, self.model = \
+                                    cal.calibrateRXDIF_ABC_ROM(self.tumor, 
+                                                                  self.ROM, 
+                                                                  self.params, 
+                                                                  self.priors, 
+                                                                  **cal_args)
+                            
                         else:
                             raise ValueError('Priors must be contained in twin',
                                              ' object for bayesian calibrations')                   
@@ -187,14 +202,14 @@ class DigitalTwin:
                              ' "gwMCMC_ROM"')      
  
 ########################## Prediction and stats ###############################  
-    def predict(self, dt = 0.5, threshold = 0.0, plot = False,
-                visualize = False, parallel = False):
+    def predict(self, dt = 0.5, threshold = 0.20, plot = False,
+                visualize = False, parallel = False, treatment = None):
         """
         Runs simulations for all parameter samples based off type of model and
         calibration used. Plots if requested but always stores outputs in the
         twin object for analysis.
         Visualize creates either 2D or 3D plots of simulation vs measured data
-            3D used matplotlibs voxels which can be very slow
+            3D uses matplotlibs voxels which can be very slow
         
         Threshold determines cutoff level for cell identification; in 
         volume fraction.
@@ -242,7 +257,13 @@ class DigitalTwin:
         else:
             N_pred_r = []
         tspan = np.arange(0,t[-1]+dt,dt)
-        default_trx_params = {'t_trx': self.tumor['t_trx']}
+        
+        if treatment == None:
+            default_trx_params = {'t_trx': self.tumor['t_trx']}
+        else:
+            default_trx_params = {}
+            for elem in treatment:
+                default_trx_params[elem] = treatment[elem]
             
         parameters = self._unpackParameters()
         calibrations = []
@@ -293,66 +314,74 @@ class DigitalTwin:
         else:
             #More than 1 sample, we know the problem was ROM with MCMC
             #We also need to parallelize this whole loop somehow
-            for i in range(samples):
-                curr = parameters[i]
-                trx_params = default_trx_params.copy()
-                trx_params = _update_trx_params(curr, default_trx_params)
-                N0 = self.ROM['ReducedTumor']['N_r'][:,0]
-                operators = lib.getOperators(curr,self.ROM)
-                sim, drugs = call_dict[self.model](N0, operators, trx_params, tspan, dt)
-                calibrations.append(self.ROM['V'] @ sim[:,t_ind[t_type==0].astype(int)])
-                calibrations_r.append(sim[:,t_ind[t_type==0].astype(int)])
-                if pred_on == True:
-                    predictions.append(self.ROM['V'] @ sim[:,t_ind[t_type==1].astype(int)])
-                    predictions_r.append(sim[:,t_ind[t_type==0].astype(int)])
-                temp1, temp2 = _maps_to_timecourse(sim, threshold, 
-                                                   self.tumor['theta'], 
-                                                   self.tumor['h'], 
-                                                   reduced = True, V = self.ROM['V']) 
-                cell_tc = np.concatenate((cell_tc, temp1), axis = 1)
-                volume_tc = np.concatenate((volume_tc, temp2), axis = 1)
-            
+            # for i in range(samples):
+            #     curr = parameters[i]
+            #     trx_params = default_trx_params.copy()
+            #     trx_params = _update_trx_params(curr, default_trx_params)
+            #     N0 = self.ROM['ReducedTumor']['N_r'][:,0]
+            #     operators = lib.getOperators(curr,self.ROM)
+                
+            #     start = time.time()
+                
+            #     sim, drugs = call_dict[self.model](N0, operators, trx_params, tspan, dt)
+                
+            #     print('FWD run time = ' + str(time.time() - start))
+                
+            #     calibrations.append(self.ROM['V'] @ sim[:,t_ind[t_type==0].astype(int)])
+            #     calibrations_r.append(sim[:,t_ind[t_type==0].astype(int)])
+            #     if pred_on == True:
+            #         predictions.append(self.ROM['V'] @ sim[:,t_ind[t_type==1].astype(int)])
+            #         predictions_r.append(sim[:,t_ind[t_type==0].astype(int)])
+            #     temp1, temp2 = _maps_to_timecourse(sim, threshold, 
+            #                                         self.tumor['theta'], 
+            #                                         self.tumor['h'], 
+            #                                         reduced = True, V = self.ROM['V']) 
+            #     cell_tc = np.concatenate((cell_tc, temp1), axis = 1)
+            #     volume_tc = np.concatenate((volume_tc, temp2), axis = 1)
+
+            data = {'ROM':self.ROM, 'model':self.model, 
+                    'N0':self.ROM['ReducedTumor']['N_r'][:,0],
+                    'trx_params':default_trx_params.copy(), 'tspan':tspan, 'dt':dt,
+                    't_ind':t_ind, 't_type':t_type, 'threshold':threshold,
+                    'theta':self.tumor['theta'], 'h': self.tumor['h'],
+                    'pred_on':pred_on}
+                
+            with (concurrent.futures.ProcessPoolExecutor() as executor):
+                futures = executor.map(_evaluateParamsParallel, repeat(data), parameters, chunksize = 2)
+                for i, result in enumerate(futures):
+                    calibrations.append(result[0])
+                    calibrations_r.append(result[1])
+                    if pred_on == True:
+                        predictions.append(result[2])
+                        predictions_r.append(result[3])
+                    cell_tc = np.concatenate((cell_tc, result[4]), axis = 1)
+                    volume_tc = np.concatenate((volume_tc, result[5]), axis = 1)
+                    
         cell_measured, volume_measured = _maps_to_timecourse(N_meas, threshold, 
                                            self.tumor['theta'], self.tumor['h'], 
                                            reduced = False, V = None)
-        
-        self.simulations = {'cell_tc': cell_tc, 'volume_tc': volume_tc,
+        if samples > 1:
+            calibrations = np.mean(np.squeeze(np.array(calibrations)), axis = 0)
+            predictions = np.mean(np.squeeze(np.array(predictions)), axis = 0)
+            
+        simulations = {'cell_tc': cell_tc, 'volume_tc': volume_tc,
                             'maps_cal': calibrations, 'maps_pred': predictions,
                             'maps_r_cal': calibrations_r, 'maps_r_pred': predictions_r,
                             'cell_measured': cell_measured, 
                             'volume_measured':volume_measured,'prediction':pred_on,
-                            'N_cal':N_cal, 'N_pred':N_pred}
+                            'N_cal':N_cal, 'N_pred':N_pred, 
+                            'N_r_cal':N_cal_r, 'N_r_pred':N_pred_r,
+                            'samples':samples,'t_span':tspan, 
+                            't_meas':t, 't_ind':t_ind, 't_type':t_type_full}
 
         #Plot outputs if requested - mean sample visualized if MCMC was used
         if visualize == True:
-            calibrations = np.squeeze(np.array(calibrations))
-            predictions = np.squeeze(np.array(predictions))
-            if samples > 1:
-                mean_calibration = np.mean(calibrations, axis = 0)
-                mean_prediction = np.mean(predictions, axis = 0)
-                
-                #Since we only have samples with ROM we can visualize the reduced coefficients here.
-                _visualize_MCMC_error(N_cal_r, N_pred_r, np.array(calibrations_r), np.array(predictions_r), pred_on, self.ROM, self.params)
-            else:
-                mean_calibration = calibrations
-                mean_prediction = predictions
-
-            # Visualize volume and cell time courses compared to measured data
-            if self.tumor['Mask'].ndim == 2:
-                _visualize_2d(N_cal, N_pred, mean_calibration, mean_prediction, pred_on, self.tumor)
-            else:     
-                _visualize_3d(N_cal, N_pred, mean_calibration, mean_prediction, pred_on, self.tumor, cut = 'axial')
-                _visualize_3d(N_cal, N_pred, mean_calibration, mean_prediction, pred_on, self.tumor, cut = 'sagittal')
+            self.simulationVisualization(simulations)
                     
         if plot == True:
-            fig, ax = plt.subplots(2,1,layout = 'constrained')
-            #Cell time course plot
-            _plotCI(ax[0], tspan, cell_tc, ['Time (days)', 'Cell Count'],
-                    t_type_full, t, cell_measured)
-            #Volume time course plot
-            _plotCI(ax[1], tspan, volume_tc, ['Time (days)', 'Volume (mm^3)'],
-                    t_type_full, t, volume_measured)
-            #Drug A and C plots need to write but not worried about it yet
+            self.simulationPlotting(simulations)
+        
+        return simulations
             
     def simulationStats(self, threshold = 0.0):
         """
@@ -444,12 +473,47 @@ class DigitalTwin:
                         if j < self.ROM['V'].shape[1] - 1:
                             offset += 1
 
+    def simulationVisualization(self, simulations = None):
+        if simulations == None:
+            simulations = self.simulations
+
+        if simulations['samples'] > 1:
+            #Since we only have samples with ROM we can visualize the reduced coefficients here.
+            _visualize_MCMC_error(simulations['N_r_cal'], simulations['N_r_pred'],
+                                  simulations['maps_r_cal'], simulations['maps_r_pred'],
+                                  simulations['prediction'], self.ROM, self.params)
+
+        # Visualize volume and cell time courses compared to measured data
+        if self.tumor['Mask'].ndim == 2:
+            _visualize_2d(simulations['N_cal'], simulations['N_pred'],
+                          simulations['maps_cal'], simulations['maps_pred'],
+                          simulations['prediction'], self.tumor)
+        else:
+            #Will make changes to 3D visualization, not a fan of current setup
+            _visualize_3d(simulations['N_cal'], simulations['N_pred'],
+                          simulations['maps_cal'], simulations['maps_pred'],
+                          simulations['prediction'], self.tumor, cut = 'axial')
+            _visualize_3d(simulations['N_cal'], simulations['N_pred'],
+                          simulations['maps_cal'], simulations['maps_pred'],
+                          simulations['prediction'], self.tumor, cut = 'sagittal')
+            
+    def simulationPlotting(self, simulations = None):
+        if simulations == None:
+            simulations = self.simulations
+            
+            fig, ax = plt.subplots(2,1,layout = 'constrained')
+            #Cell time course plot
+            _plotCI(ax[0], simulations['tspan'], simulations['cell_tc'], ['Time (days)', 'Cell Count'],
+                    simulations['t_type'], simulations['t_meas'], simulations['cell_measured'])
+            #Volume time course plot
+            _plotCI(ax[1], simulations['tspan'], simulations['volume_tc'], ['Time (days)', 'Volume (mm^3)'],
+                    simulations['t_type'], simulations['t_meas'], simulations['volume_measured'])
+            #Drug A and C plots need to write but not worried about it yet
+        
 ##################### Internal DigitalTwin functions ##########################  
     def _unpackParameters(self):
         """
         Returns list of length samples (1 for LM calibration) with a dictionary for each sample.
-        Represents
-
         """
         zeroed = {}
         found_params = []
@@ -508,7 +572,7 @@ class Parameter:
             string1 = 'fixed'
         elif self.assignment == 'l':
             string1 = 'local'
-        else:
+        elif self.assignment == 'g':
             string1 = 'global'     
         
         if self.value is None:
@@ -589,6 +653,7 @@ class ReducedParameter:
 
 ###############################################################################
 ############################ Internal Functions ###############################
+################################# General #####################################
 def _atleast_2d(arr):
     if np.atleast_1d(arr).ndim < 2:
         return np.expand_dims(np.atleast_1d(arr),axis=1)
@@ -658,6 +723,26 @@ def _maps_to_timecourse(maps, threshold, theta, h, reduced = False, V = None):
         volume_tc = np.append(volume_tc, temp[temp>=threshold].size * np.prod(h))
     return cell_tc.reshape((-1,1)), volume_tc.reshape((-1,1))
 
+def _evaluateParamsParallel(data, curr):
+    trx_params = _update_trx_params(curr, data['trx_params'])
+    operators = lib.getOperators(curr,data['ROM'])
+    sim, drugs = call_dict[data['model']](data['N0'], operators, trx_params, data['tspan'], data['dt'])
+    calibrations = data['ROM']['V'] @ sim[:,data['t_ind'][data['t_type']==0].astype(int)]
+    calibrations_r = sim[:,data['t_ind'][data['t_type']==0].astype(int)]
+    if data['pred_on'] == True:
+        predictions = data['ROM']['V'] @ sim[:,data['t_ind'][data['t_type']==1].astype(int)]
+        predictions_r = sim[:,data['t_ind'][data['t_type']==0].astype(int)]
+    else:
+        predictions = []
+        predictions_r = []
+    tc_c, tc_v = _maps_to_timecourse(sim, data['threshold'], 
+                                       data['theta'], 
+                                       data['h'], 
+                                       reduced = True, V = data['ROM']['V'])
+    return calibrations, calibrations_r, predictions, predictions_r, tc_c, tc_v
+
+############################# General plotting ################################
+
 def _alphaToHex(n):
     string = '{0:x}'.format(round(n*255))
     if len(string) == 1:
@@ -674,6 +759,7 @@ def _centerMass(mat):
         com.append(c)
     return com
 
+############################ MCMC Visualization ###############################
 def _visualize_MCMC_error(N_cal_r, N_pred_r, calibrations_r, predictions_r, pred_on, ROM, params):
     r = ROM['V'].shape[1]
     rows = N_cal_r.shape[N_cal_r.ndim-1]
@@ -693,7 +779,9 @@ def _visualize_MCMC_error(N_cal_r, N_pred_r, calibrations_r, predictions_r, pred
             try:
                 #Get likelihood distribution if sigma is in params
                 s = params['sigma'].get()
-                _atleast_2d(ax)[i,j].plot(np.linspace(-3*s, 3*s, 1000), stats.norm.pdf(np.linspace(-3*s, 3*s, 1000), 0, s),'r--',label='Likelihood')
+                _atleast_2d(ax)[i,j].plot(np.linspace(-3*s, 3*s, 1000),
+                                          stats.norm.pdf(np.linspace(-3*s, 3*s, 1000), 0, s),
+                                          'r--',label='Likelihood')
             except:
                 pass
             
@@ -710,11 +798,14 @@ def _visualize_MCMC_error(N_cal_r, N_pred_r, calibrations_r, predictions_r, pred
                 try:
                     #Get likelihood distribution if sigma is in params
                     s = params['sigma'].get()
-                    _atleast_2d(ax)[i+spacer,j].plot(np.linspace(-3*s, 3*s, 1000), stats.norm.pdf(np.linspace(-3*s, 3*s, 1000), 0, s),'r--',label='Likelihood')
+                    _atleast_2d(ax)[i+spacer,j].plot(np.linspace(-3*s, 3*s, 1000),
+                                                     stats.norm.pdf(np.linspace(-3*s, 3*s, 1000), 0, s),
+                                                     'r--',label='Likelihood')
                 except:
                     pass
     plt.tight_layout()
-            
+    
+############################# 2D Visualization ################################            
 def _visualize_2d(N_cal, N_pred, calibration, prediction, pred_on, tumor):
     rows = N_cal.shape[N_cal.ndim-1]
     if pred_on == True:
@@ -754,7 +845,8 @@ def _visualize_2d(N_cal, N_pred, calibration, prediction, pred_on, tumor):
             p = ax[i+spacer,2].imshow(temp_sim - temp_N, clim=(-1,1),cmap='jet')
             ax[i+spacer,2].set_xticks([]), ax[i+spacer,2].set_yticks([])
             plt.colorbar(p,fraction=0.046, pad=0.04)
-        
+
+############################# 3D Visualization ################################
 def _visualize_3d(N_cal, N_pred, calibration, prediction, pred_on, tumor, cut = 'axial'):
     rows = N_cal.shape[N_cal.ndim-1]
     if pred_on == True:
@@ -857,6 +949,7 @@ def _plotVoxelArray(ax, voxelarray_tumor, colorarray_tumor, voxelarray_breast, c
     ax.set_aspect('equal')
     plt.colorbar(sm, ax = ax,fraction=0.046, pad=0.04)
     
+############################## Line plotting ##################################
 def _plotCI(ax, tspan, simulation, labels, t_type, t_meas, measured = None):
     if simulation.shape[1] != 1:
         #plot confidence interval stuff

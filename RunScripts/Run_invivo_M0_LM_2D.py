@@ -29,7 +29,7 @@ if __name__ == '__main__':
     
     required_ops = ('A','B','H','T')
     params_ops = ('d','k','k','alpha')
-    type_ops = ('G','l','l','G')
+    type_ops = ('g','l','l','g')
     zipped = zip(required_ops, params_ops, type_ops)
     
     ROM_args = {'bounds': bounds, 'zipped': zipped}
@@ -39,7 +39,7 @@ if __name__ == '__main__':
                                  ROM = True, ROM_args = ROM_args)
     
     params = {'d':dtwin.Parameter('d','g'), 'k':dtwin.ReducedParameter('k','r',twin.ROM['V']), 'alpha':dtwin.Parameter('alpha','g'),
-                'beta_a':dtwin.Parameter('beta_a','g'), 'beta_c': dtwin.Parameter('beta_c','g')}
+                'beta_a':dtwin.Parameter('beta_a','f'), 'beta_c': dtwin.Parameter('beta_c','f')}
     
     params['d'].setBounds(np.array([1e-6,1e-3]))
     params['k'].setBounds(np.array([1e-6,0.1]))

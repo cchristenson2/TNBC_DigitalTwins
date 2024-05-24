@@ -39,7 +39,7 @@ if __name__ == '__main__':
                                  ROM = True, ROM_args = ROM_args)
     
     params = {'d':dtwin.Parameter('d','g'), 'k':dtwin.ReducedParameter('k','r',twin.ROM['V']), 'alpha':dtwin.Parameter('alpha','g'),
-                'beta_a':dtwin.Parameter('beta_a','g'), 'beta_c': dtwin.Parameter('beta_c','g'), 'sigma':dtwin.Parameter('sigma','f')}
+                'beta_a':dtwin.Parameter('beta_a','g'), 'beta_c': dtwin.Parameter('beta_c','g'), 'sigma':dtwin.Parameter('sigma','g')}
     
     params['d'].setBounds(np.array([1e-6,1e-3]))
     params['k'].setBounds(np.array([1e-6,0.1]))
@@ -47,13 +47,13 @@ if __name__ == '__main__':
     params['alpha'].setBounds(np.array([1e-6,0.8]))
     params['beta_a'].setBounds(np.array([0.35, 0.85]))
     params['beta_c'].setBounds(np.array([1.0, 5.5]))
-    params['sigma'].update(0.25)
+    params['sigma'].setBounds(np.array([1e-6,5]))
     twin.setParams(params)
     twin.getPriors(params)
     
     #Test calibrate LM
-    cal_args = {'options':{'samples':10000, 'burnin':0.3, 'progress': True, 'thin': 10, 'step_size': 1.6}, 'plot':False, 'parallel':True}
+    cal_args = {'options':{'samples':100000, 'burnin':0.3, 'progress': True, 'thin': 100, 'step_size': 1.6}, 'plot':True, 'parallel':True}
     twin.calibrateTwin('gwMCMC_ROM', cal_args)
     twin.predict(dt = 0.5, threshold = 0.25, plot = True, visualize = True, parallel = True)
     twin.simulationStats(threshold = 0.25)
-    # twin.paramVisualization()
+    twin.paramVisualization()

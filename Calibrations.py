@@ -18,7 +18,7 @@
     - Generates priors based on parameters being calibrated. Lots of assumptions
       hard coded into this.
 
-Last updated: 5/2/2024
+Last updated: 5/23/2024
 """
 import numpy as np
 import scipy.ndimage as ndi
@@ -30,8 +30,11 @@ import matplotlib.pyplot as plt
 import copy
 import emcee
 import multiprocessing as mp
-import corner
-import pyabc as abc
+import pyabc as pyabc
+from operator import itemgetter
+
+import os
+import tempfile
 
 import ForwardModels as fwd
 import Library as lib
@@ -188,7 +191,7 @@ def calibrateRXDIF_LM(tumor, params, dt = 0.5, options = {}, parallel = False,
             all_scenarios = _getJScenarios(p_locator, curr, trx_params,
                                           options['delta'], default_scenario)
             if parallel:
-                with (concurrent.futures.ProcessPoolExecutor(max_workers = 12)
+                with (concurrent.futures.ProcessPoolExecutor()
                       as executor):
                     futures = executor.map(_getJColumn, all_scenarios)
                     for i, output in enumerate(futures):
@@ -270,7 +273,7 @@ def calibrateRXDIF_LM(tumor, params, dt = 0.5, options = {}, parallel = False,
         ax[1,2].plot(range(iteration), stats['SSE_track'])
         ax[1,2].set_ylabel('SSE')
         
-    return _updateParams(curr, params), stats, model
+    return _updateParams(curr, params), stats, model, N_guess
 
 ########################### ROM LM calibration ################################
 def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = False, output = False):
@@ -481,7 +484,7 @@ def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = Fal
         ax[1,2].plot(range(iteration), stats['SSE_track'])
         ax[1,2].set_ylabel('SSE')
             
-    return _updateParams(curr, params), stats, model
+    return _updateParams(curr, params), stats, model, N_guess_r
 
 ########################## ROM gwMCMC calibration #############################
 def calibrateRXDIF_gwMCMC_ROM(tumor, ROM, params, priors, dt = 0.5,
@@ -649,13 +652,83 @@ def calibrateRXDIF_gwMCMC_ROM(tumor, ROM, params, priors, dt = 0.5,
 
 ########################### ROM pyABC calibration #############################
 def calibrateRXDIF_ABC_ROM(tumor, ROM, params, priors, dt = 0.5,
-                              options = {}, plot = False):
-    print(0)
+                              options = {}, plot = False):    
+
     #Prep measured data and get simulation details
+    options_fields = ['n_pops','pop_size','thin','burnin','epsilon','distance']
+    default_options = [5, 1000, 1, 0.1, 0.2,'SSE']
+    for i, elem in enumerate(options_fields):
+        if elem not in options:
+            options[elem] = default_options[i]
+            
+    distance = _distance(options['distance'])
+            
+    #Determine model to use based off data dimensions and prep data for calibration
+    data = {}
+    data['model'] = 'fwd.OP_RXDIF_wAC'
+    data['N0_r'] = ROM['ReducedTumor']['N_r'][:,0]
+    data['N_true_r'] = ROM['ReducedTumor']['N_r'][:,1:]
+    data['t_true'] = tumor['t_scan'][1:]
+    data['trx_params'] = {}
+    data['trx_params']['t_trx'] = tumor['t_trx']
+    data['ROM'] = ROM
+    data['dt'] = dt
+    
+    #Get size of ROM for reference
+    n, r = ROM['V'].shape
     
     #Get what parameters are calibrated and how they are calibrated
+    #Currently only works with global d, alpha, beta and reduced k
+    required_params = ['d','k','alpha','beta_a','beta_c','sigma']
+    found_params = []
+    fixed_params = {}
+    p_locator = {}
+    bounds = {}
+    for elem in params:
+        found_params.append(elem) 
+        if params[elem].assignment == 'f':
+            fixed_params[elem] = params[elem].get()
+        elif params[elem].assignment == 'g':
+            p_locator[elem] = [elem]
+        elif params[elem].assignment == 'r':
+            #store variable name with mode number attached for each
+            temp = [elem+str(x) for x in range(r)]
+            p_locator[elem] = temp
+            bounds[elem] = params[elem].getBounds()
+            
+    if options['epsilon'] == 'calibrated':
+        #Only used for distance epsilon
+        Model_r = calibrateRXDIF_LM_ROM(tumor, ROM, params)[3]
+        options['epsilon'] = distance({'data':Model_r}, {'data':data['N_true_r']})
+        print('Epsilon = '+str(options['epsilon']))
+
+    for elem in required_params: #Cannot turn off proliferation right now
+        if elem not in found_params:
+            fixed_params[elem] = 0
+                
+    data['default_params'] = {}
+    for elem in fixed_params:
+        data['default_params'][elem] = fixed_params[elem]
+                
+    constrainedPriors = _ConstrainedPrior(priors, ROM['V'], bounds, p_locator)  
     
-    #Get priors definition, multivariate prior constrained by reconstructed k
+    sampler = pyabc.ABCSMC(_model(data, p_locator), constrainedPriors, distance,
+                            population_size = options['pop_size'])
+     
+    # sampler = pyabc.ABCSMC(_model(data, p_locator), constrainedPriors, _distance,
+    #                        population_size = options['pop_size'],
+    #                        sampler = pyabc.sampler.ConcurrentFutureSampler(cfuture_executor = concurrent.futures.ProcessPoolExecutor()))
+    
+    # sampler = pyabc.ABCSMC(_model(data, p_locator), constrainedPriors, _distance,
+    #                        population_size = options['pop_size'],
+    #                        sampler = pyabc.sampler.MappingSampler())
+    
+    db_path = os.path.join(tempfile.gettempdir(), "ABC_test.db")
+    # csv_path = os.path.join(tempfile.gettempdir(), "ABC_test.csv")
+    sampler.new("sqlite:///" + db_path, observed_sum_stat = {"data": data['N_true_r']})
+    history = sampler.run(minimum_epsilon=options['epsilon'], max_nr_populations=options['n_pops'])
+    
+    return _unpackSamplesABC(params, history.get_distribution()[0], p_locator), data['model']
 
 
 ######################## Priors for MCMC calibration ##########################
@@ -688,6 +761,11 @@ def generatePriors(params):
                     for j in range(bounds.shape[0]):
                         priors['k'+str(j)] = stats.uniform(bounds[j,0],
                                                            bounds[j,1] - bounds[j,0])
+            if elem == 'sigma':
+                if params[elem].assignment == 'g':
+                    priors['sigma'] = stats.uniform(params[elem].getBounds()[0],
+                                                    params[elem].getBounds()[1] 
+                                                    - params[elem].getBounds()[0])
     return priors
 
 ################################ Internal use #################################
@@ -820,8 +898,8 @@ def _log_posterior(p, data):
     #Calculate likelihood
     residuals = data['N_true_r'] - sim
     ll = -0.5 * np.sum((residuals/curr_params['sigma'])**2 
-                       + np.log(2*np.pi) 
-                       + np.log(curr_params['sigma']**2))
+                        + np.log(2*np.pi) 
+                        + np.log(curr_params['sigma']**2))
     return prior + ll
 
 def _unpackChains(params, chains, p_locator):
@@ -835,31 +913,93 @@ def _unpackChains(params, chains, p_locator):
     return new_params
 
 ######################### Internal use for pyABC ##############################
-class _ConstrainedPrior(abc.DistributionBase):
-    def __init__(self,priors):
+class _ConstrainedPrior(pyabc.DistributionBase):
+    def __init__(self,priors,V,bounds,p_locator):
+        self.priors = {}
         for elem in priors:
-            print(0)
-            
-        return  0
+            self.priors[elem] = priors[elem]
+        self.V = V
+        self.bounds = bounds
+        self.p_locator = p_locator
     
     def rvs(self, *args, **kwargs):
-        return 0
+        while True:
+            params = {}
+            local = {}
+            for elem in self.p_locator:
+                if len(self.p_locator[elem]) == 1:
+                    params[elem] = self.priors[elem].rvs()
+                else:
+                    temp = []
+                    for curr_prior in self.p_locator[elem]:
+                        params[curr_prior] = self.priors[curr_prior].rvs()
+                        temp.append(params[curr_prior])
+                    local[elem] = np.array(temp).copy()
+            good_set = 1
+            
+            for elem in local:
+                recon = self.V@local[elem]
+                indices = np.nonzero(abs(recon)>1e-3)[0]
+                tol = 1+1e-2
+                if (np.nonzero((recon[indices] < self.bounds[elem][0]/tol) 
+                               | (recon[indices] > self.bounds[elem][1]*tol))[0].size != 0):
+                    good_set = 0
+            if good_set == 1:
+                return pyabc.Parameter(params)
     
     def pdf(self, x):
-        return 0
-    
-def _create_model(data):
-    def model(p):
-        curr_params = copy.deepcopy(data['default_params'])
-        for elem in p:
-            curr_params[elem] = p[elem].copy()
-        ops = lib.getOperators(curr_params, data['ROM'])
-        trx_params = copy.deepcopy(data['trx_params'])
-        trx_params = _update_trx_params(curr_params, trx_params)
-        sim = call_dict[data['model']](data['N0_r'], ops, trx_params, 
-                                       data['t_true'], data['dt'])[0]
-        return {'data':sim}
+        prior = 1
+        for elem in self.priors:
+            prior *= self.priors[elem].pdf(x[elem])
+        return prior 
         
-def _distance(x, y):
-    return np.sum((x['data'] - y['data'])**2)
+class _model:
+    def __init__(self, data, p_locator):
+        self.curr_params = copy.deepcopy(data['default_params'])
+        self.data = data
+        self.p_locator = p_locator        
+        
+    def __call__(self, p):
+        k_names = [];
+        for elem in p:
+            if 'k' in elem:
+                k_names.append(elem)
+            else:
+                self.curr_params[elem] = p[elem]
+        self.curr_params['k'] = np.array(itemgetter(*k_names)(p))
+        
+        for elem in self.p_locator:
+            if len(self.p_locator[elem]) == 1:
+                self.curr_params[elem] = p[elem]
+            else:
+                self.curr_params[elem] = np.array(itemgetter(*self.p_locator[elem])(p))
+        
+        ops = lib.getOperators(self.curr_params, self.data['ROM'])
+        trx_params = copy.deepcopy(self.data['trx_params'])
+        trx_params = _update_trx_params(self.curr_params, trx_params)
+        sim = call_dict[self.data['model']](self.data['N0_r'], ops, trx_params, 
+                                       self.data['t_true'], self.data['dt'])[0]
+        return {'data':sim} 
+        
+class _distance:
+    def __init__(self, option):
+        self.option = option
+        
+    def __call__(self, x, y):
+        if self.option == 'SSE':
+            return np.sum((x['data'] - y['data'])**2)
+        elif self.option == 'MSE':
+            return np.mean((x['data'] - y['data'])**2)
+        elif self.option == 'SAE':
+            return np.sum(np.abs(x['data'] - y['data']))
+        elif self.option == 'MAE':
+            return np.mean(np.abs(x['data'] - y['data']))
+
+def _unpackSamplesABC(params, datastore, p_assignment):
+    new_params = copy.deepcopy(params)
+    for elem in p_assignment:
+        new_params[elem].update(datastore.loc[:,p_assignment[elem]]\
+                                .to_numpy().T.copy())
+    return new_params
+
 

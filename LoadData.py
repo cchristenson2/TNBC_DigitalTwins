@@ -125,6 +125,26 @@ def LoadTumor_mat(location, downsample = True, inplane = 4, inslice = 1,
     
     return tumor
  
+def LoadInsilicoTumor_mat(location, split = None):
+   tumor = _loadmat(location)['tumor']
+   tumor['h'] = np.array([tumor['h'],tumor['h'],tumor['dz']])
+   if tumor['Mask'].ndim == 2:
+       tumor['bcs'] = buildBoundaries_2D(tumor['Mask'])
+   else:
+       tumor['bcs'] = buildBoundaries_3D(tumor['Mask'])
+   if split != None:
+       if tumor['Mask'].ndim == 2:
+           saved_N = tumor['N'][:,:,split:]
+           tumor['N'] = np.delete(tumor['N'],np.s_[split:],axis=2)
+       else:
+           saved_N = tumor['N'][:,:,:,split:]
+           tumor['N'] = np.delete(tumor['N'],np.s_[split:],axis=3)
+       saved_times = tumor['t_scan'][split:]
+       tumor['t_scan'] = np.delete(tumor['t_scan'],np.s_[split:],axis=0)
+       tumor['Future N'] = saved_N
+       tumor['Future t_scan'] = saved_times
+   return tumor    
+    
 ########################## Processing functions ###############################
 def downSample_2D(N, AUC, Mask, Tissues, h, inplane, inslice):
     """
