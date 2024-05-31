@@ -139,8 +139,8 @@ def RXDIF_3D_wAC(N0, k, d, alpha, trx_params, t, h, dt, bcs):
         delivs  = _updateDosing(step, nt_trx, delivs, dt)
         #Get current dosage
         for n in range(delivs.size):
-            drugs[0,step] = drugs[0,step] + doses[n,0]*np.exp(-1*beta[0]*delivs[n])
-            drugs[1,step] = drugs[1,step] + doses[n,1]*np.exp(-1*beta[1]*delivs[n])
+            drugs[step,0] = drugs[step,0] + doses[n,0]*np.exp(-1*beta[0]*delivs[n])
+            drugs[step,1] = drugs[step,1] + doses[n,1]*np.exp(-1*beta[1]*delivs[n])
             
         #Space stepping
         for z in range(sz):
@@ -190,7 +190,7 @@ def RXDIF_3D_wAC(N0, k, d, alpha, trx_params, t, h, dt, bcs):
                     proliferation = (Sim[y,x,z,step-1]*k[y,x,z]
                                      *(1 - Sim[y,x,z,step-1]))
                     treat = (trx_params.get('AUC')[y,x,z] * Sim[y,x,z,step-1] 
-                             * (drugs[0,step]*alpha[0] + drugs[1,step]*alpha[1]))
+                             * (drugs[step,0]*alpha[0] + drugs[step,1]*alpha[1]))
                     
                     #Apply time stepping
                     Sim[y,x,z,step] = Sim[y,x,z,step-1] + dt*(diffusion 
@@ -252,8 +252,8 @@ def RXDIF_2D_wAC(N0, k, d, alpha, trx_params, t, h, dt, bcs):
         delivs  = _updateDosing(step, nt_trx, delivs, dt)
         #Get current dosage
         for n in range(delivs.size):
-            drugs[0,step] = drugs[0,step] + doses[n,0]*np.exp(-1*beta[0]*delivs[n])
-            drugs[1,step] = drugs[1,step] + doses[n,1]*np.exp(-1*beta[1]*delivs[n])
+            drugs[step,0] = drugs[step,0] + doses[n,0]*np.exp(-1*beta[0]*delivs[n])
+            drugs[step,1] = drugs[step,1] + doses[n,1]*np.exp(-1*beta[1]*delivs[n])
             
         #Space stepping
         for y in range(sy):
@@ -286,7 +286,7 @@ def RXDIF_2D_wAC(N0, k, d, alpha, trx_params, t, h, dt, bcs):
                 proliferation = Sim[y,x,step-1]*k[y,x]*(1 - Sim[y,x,step-1])
                 
                 treat = (trx_params.get('AUC')[y,x] * Sim[y,x,step-1] 
-                         * (drugs[0,step]*alpha[0] + drugs[1,step]*alpha[1]))
+                         * (drugs[step,0]*alpha[0] + drugs[step,1]*alpha[1]))
                 
                 #Apply time stepping
                 Sim[y,x,step] = Sim[y,x,step-1] + dt*(diffusion + proliferation - treat)
@@ -340,14 +340,14 @@ def OP_RXDIF_wAC(N0, ops, trx_params, t, dt):
         delivs  = _updateDosing(step, nt_trx, delivs, dt)
         #Get current dosage
         for n in range(delivs.size):
-            drugs[0,step] = drugs[0,step] + doses[n,0]*np.exp(-1*beta[0]*delivs[n])
-            drugs[1,step] = drugs[1,step] + doses[n,1]*np.exp(-1*beta[1]*delivs[n])
+            drugs[step,0] = drugs[step,0] + doses[n,0]*np.exp(-1*beta[0]*delivs[n])
+            drugs[step,1] = drugs[step,1] + doses[n,1]*np.exp(-1*beta[1]*delivs[n])
         
         #solve for next time point
         Sim[:,step] = Sim[:,step-1] + dt * (A@Sim[:,step-1] + B@Sim[:,step-1] 
                                             - H@np.kron(Sim[:,step-1],Sim[:,step-1]) 
-                                            - (T[:,:,0]*drugs[0,step])@Sim[:,step-1] 
-                                            - (T[:,:,1]*drugs[1,step])@Sim[:,step-1])
+                                            - (T[:,:,0]*drugs[step,0])@Sim[:,step-1] 
+                                            - (T[:,:,1]*drugs[step,1])@Sim[:,step-1])
             
     return Sim[:,t_], drugs
 
@@ -390,7 +390,7 @@ def _setupTRX(trx_params, nt, dt):
     #Setup treatment matrices
     nt_trx = trx_params.get('t_trx') / dt #Indices of treatment times
     delivs = np.array([]) #Storage for time since deliveries that have passed
-    drugs = np.zeros([2,nt])
+    drugs = np.zeros([nt,2])
     
     #Check if doses are specified
     if 'doses' in trx_params:

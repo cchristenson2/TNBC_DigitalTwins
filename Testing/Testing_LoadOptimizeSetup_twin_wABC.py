@@ -9,9 +9,10 @@ from scipy.linalg import LinAlgWarning
 warnings.filterwarnings(action = 'ignore', category=LinAlgWarning)
 
 import DigitalTwin as dtwin
-
+import Optimize as opt
 
 if __name__ == '__main__':
+    
     #Set paths
     home = os.path.dirname(os.getcwd())
     datapath = home + '\Data\PatientData_ungrouped\\'
@@ -30,7 +31,7 @@ if __name__ == '__main__':
     
     required_ops = ('A','B','H','T')
     params_ops = ('d','k','k','alpha')
-    type_ops = ('G','l','l','G')
+    type_ops = ('g','l','l','g')
     zipped = zip(required_ops, params_ops, type_ops)
     
     ROM_args = {'bounds': bounds, 'zipped': zipped}
@@ -54,8 +55,7 @@ if __name__ == '__main__':
     twin.setParams(params)
     twin.getPriors(params)
     
-    #Test calibrate LM
-    cal_args = {'dt': 0.5, 'options': {'n_pops': 3,'pop_size':100,'epsilon':'calibrated','distance':'MSE'}}
+    cal_args = {'dt': 0.5, 'options': {'n_pops': 1,'pop_size':100,'epsilon':'calibrated','distance':'MSE'}}
     
     start = time.time()
     twin.calibrateTwin('ABC_ROM', cal_args)
@@ -64,4 +64,10 @@ if __name__ == '__main__':
     start = time.time()
     twin.simulations = twin.predict(dt = 0.5, threshold = 0.25, plot = False, visualize = False, parallel = False)
     print('Prediction time = ' + str(time.time() - start))
-    # twin.simulationStats(threshold = 0.25)
+    
+    problem = opt.problemSetup_cellMin(twin.tumor, twin.simulations, objectives = ['final_cells'], threshold = 0.25)
+    start = time.time()
+    output = twin.optimize_cellMin(problem)
+    print('Optimization time = ' + str(time.time() - start))
+    optimal_simulation = twin.predict(treatment = output[1], threshold = 0.25, plot = True)
+    

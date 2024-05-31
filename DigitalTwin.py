@@ -24,6 +24,7 @@ import matplotlib.cm as cm
 import matplotlib.colors as col
 import scipy.ndimage as ndi
 import scipy.stats as stats
+import scipy.optimize as sciop
 import concurrent.futures
 from itertools import repeat
 import time
@@ -34,15 +35,13 @@ import ReducedModel as rm
 import ForwardModels as fwd
 import Calibrations as cal
 import Library as lib
+import Optimize as opt
 
 ############################# Global variables ################################
 call_dict = {
     'fwd.RXDIF_2D_wAC': fwd.RXDIF_2D_wAC,
     'fwd.RXDIF_3D_wAC': fwd.RXDIF_3D_wAC,
     'fwd.OP_RXDIF_wAC': fwd.OP_RXDIF_wAC}
-
-if __name__ == '__main__':
-    print('main')
 
 ###############################################################################
 ###############################################################################
@@ -272,6 +271,7 @@ class DigitalTwin:
         predictions_r = []
         cell_tc = np.array([]).reshape(tspan.size,0)
         volume_tc = np.array([]).reshape(tspan.size,0)
+        drug_tc = []
         samples = len(parameters)
         if samples == 1:
             i = 0
@@ -311,6 +311,7 @@ class DigitalTwin:
                                                    reduced = True, V = self.ROM['V']) 
             cell_tc = np.concatenate((cell_tc, temp1), axis = 1)
             volume_tc = np.concatenate((volume_tc, temp2), axis = 1)
+            drug_tc.append(drugs)
         else:
             #More than 1 sample, we know the problem was ROM with MCMC
             #We also need to parallelize this whole loop somehow
@@ -356,6 +357,7 @@ class DigitalTwin:
                         predictions_r.append(result[3])
                     cell_tc = np.concatenate((cell_tc, result[4]), axis = 1)
                     volume_tc = np.concatenate((volume_tc, result[5]), axis = 1)
+                    drug_tc.append(result[6])
                     
         cell_measured, volume_measured = _maps_to_timecourse(N_meas, threshold, 
                                            self.tumor['theta'], self.tumor['h'], 
@@ -363,6 +365,9 @@ class DigitalTwin:
         if samples > 1:
             calibrations = np.mean(np.squeeze(np.array(calibrations)), axis = 0)
             predictions = np.mean(np.squeeze(np.array(predictions)), axis = 0)
+        else:
+            calibrations = calibrations[0]
+            predictions = predictions[0]
             
         simulations = {'cell_tc': cell_tc, 'volume_tc': volume_tc,
                             'maps_cal': calibrations, 'maps_pred': predictions,
@@ -371,8 +376,9 @@ class DigitalTwin:
                             'volume_measured':volume_measured,'prediction':pred_on,
                             'N_cal':N_cal, 'N_pred':N_pred, 
                             'N_r_cal':N_cal_r, 'N_r_pred':N_pred_r,
-                            'samples':samples,'t_span':tspan, 
-                            't_meas':t, 't_ind':t_ind, 't_type':t_type_full}
+                            'samples':samples,'tspan':tspan, 
+                            't_meas':t, 't_ind':t_ind, 't_type':t_type_full,
+                            'drug_tc':drug_tc, 'trx_params':default_trx_params}
 
         #Plot outputs if requested - mean sample visualized if MCMC was used
         if visualize == True:
@@ -476,13 +482,11 @@ class DigitalTwin:
     def simulationVisualization(self, simulations = None):
         if simulations == None:
             simulations = self.simulations
-
         if simulations['samples'] > 1:
             #Since we only have samples with ROM we can visualize the reduced coefficients here.
             _visualize_MCMC_error(simulations['N_r_cal'], simulations['N_r_pred'],
                                   simulations['maps_r_cal'], simulations['maps_r_pred'],
                                   simulations['prediction'], self.ROM, self.params)
-
         # Visualize volume and cell time courses compared to measured data
         if self.tumor['Mask'].ndim == 2:
             _visualize_2d(simulations['N_cal'], simulations['N_pred'],
@@ -501,14 +505,38 @@ class DigitalTwin:
         if simulations == None:
             simulations = self.simulations
             
-            fig, ax = plt.subplots(2,1,layout = 'constrained')
-            #Cell time course plot
-            _plotCI(ax[0], simulations['tspan'], simulations['cell_tc'], ['Time (days)', 'Cell Count'],
-                    simulations['t_type'], simulations['t_meas'], simulations['cell_measured'])
-            #Volume time course plot
-            _plotCI(ax[1], simulations['tspan'], simulations['volume_tc'], ['Time (days)', 'Volume (mm^3)'],
-                    simulations['t_type'], simulations['t_meas'], simulations['volume_measured'])
-            #Drug A and C plots need to write but not worried about it yet
+        fig, ax = plt.subplots(2,2,layout = 'constrained',figsize = (8,5))
+        #Cell time course plot
+        _plotCI(ax[0,0], simulations['tspan'], simulations['cell_tc'], ['Time (days)', 'Cell Count','Simulation'],
+                simulations['t_type'], simulations['t_meas'], simulations['cell_measured'])
+        #Volume time course plot
+        _plotCI(ax[0,1], simulations['tspan'], simulations['volume_tc'], ['Time (days)', 'Volume (mm^3)','Simulation'],
+                simulations['t_type'], simulations['t_meas'], simulations['volume_measured'])
+        #Drug A and C plots need to write but not worried about it yet
+        drug_array = np.array(simulations['drug_tc'])
+        _plotCI(ax[1,0], simulations['tspan'], drug_array[:,:,0].T, ['Time (days)', 'Concentration','Adriamycin'],
+                simulations['t_type'], simulations['t_meas'])
+        _plotCI(ax[1,1], simulations['tspan'], drug_array[:,:,1].T, ['Time (days)', 'Concentration','Cyclophosphamide'],
+                simulations['t_type'], simulations['t_meas'])
+
+########################## Optimization functions #############################
+    def optimize_cellMin(self, problem):
+        problem['doses_guess'] = opt.randomizeInitialGuess(self,problem)
+        # output = sciop.minimize(opt.constrainedObjective, problem['doses_guess'],
+        #                         args = (problem, self), bounds = [(0,1)], constraints = problem['lin-constraints'])
+        
+        if problem['nonlin-constraints']:
+            nonlin_con = {'type':'ineq', 'fun': opt.constraints,'args':(problem,self,)}
+            problem['lin-constraints'].append(nonlin_con)
+        output = sciop.minimize(opt.objective, problem['doses_guess'],
+                                args = (problem, self), bounds = [(0,1)], constraints = problem['lin-constraints'])
+        
+        print(output)
+        new_days = np.concatenate((problem['t_trx_soc'], problem['potential_days']),axis = 0)
+        new_doses = np.concatenate((problem['doses_soc'], output.x), axis = 0)
+        optimized = {'t_trx': new_days, 'doses': new_doses}
+        optimal_simulations = self.predict(treatment = optimized)
+        return optimal_simulations, optimized
         
 ##################### Internal DigitalTwin functions ##########################  
     def _unpackParameters(self):
@@ -739,7 +767,7 @@ def _evaluateParamsParallel(data, curr):
                                        data['theta'], 
                                        data['h'], 
                                        reduced = True, V = data['ROM']['V'])
-    return calibrations, calibrations_r, predictions, predictions_r, tc_c, tc_v
+    return calibrations, calibrations_r, predictions, predictions_r, tc_c, tc_v, drugs
 
 ############################# General plotting ################################
 
@@ -956,32 +984,35 @@ def _plotCI(ax, tspan, simulation, labels, t_type, t_meas, measured = None):
         median_sim = np.median(simulation, axis = 1)
         prctile = np.percentile(simulation, [1,99,25,75], axis = 1)
         ax.fill_between(tspan,prctile[0,:],prctile[1,:],color=[0,0,1,0.1],
-                        label='Simulation - range',zorder=1)
+                        label=labels[2] + ' - range',zorder=1)
         ax.fill_between(tspan,prctile[2,:],prctile[3,:],color=[0,0,1,0.5],
-                        label='Simulation - IQR',zorder=2)
-        line_label = 'Simulation - median'
+                        label=labels[2] + ' - IQR',zorder=2)
+        line_label = labels[2] + ' - median'
     else:
         median_sim = simulation
-        line_label = 'Simulation'
+        line_label = labels[2]
     ax.plot(tspan,  median_sim, 'b-', linewidth = 1,label=line_label,zorder=3)
     if measured is not None:
         ax.scatter(t_meas, measured, color = 'k', label = 'Measured',zorder=4)
     
     if np.any(t_type==1):
-        point = t_meas[np.where(t_type==0)[0][-1]]
-        ax.axvline(point,color = 'r',linestyle = '--',linewidth = 0.5,zorder=5)
-        #Get tiny triangle to signal direction of prediction
-        limits = ax.get_ybound()
-        ax.arrow(point+0.5,limits[0] + limits[1]*0.03, 1, 0, color = 'r',head_width = limits[1]*0.05, head_length = 0.5, length_includes_head = True,zorder=6)
-        ax.arrow(point+0.5,limits[1] - limits[1]*0.03, 1, 0, color = 'r',head_width = limits[1]*0.05, head_length = 0.5, length_includes_head = True,zorder=6)
-        if _findNearest(limits,np.mean(median_sim)) == 0:
-            ax.text(point+2.0,limits[1] - limits[1]*0.03 - limits[1]*0.025, 'Prediction', color = 'r', fontsize = 'xx-small',zorder=7)
-        else:
-            ax.text(point+2.0,limits[0] + limits[1]*0.03 - limits[1]*0.025 , 'Prediction', color = 'r', fontsize = 'xx-small',zorder=7)
+        _predictionArrow(ax, t_meas, t_type, median_sim)
         
     ax.legend(fontsize='xx-small')
     ax.set_xlabel(labels[0])
     ax.set_ylabel(labels[1])
+
+def _predictionArrow(ax, t_meas, t_type, median_sim):
+    point = t_meas[np.where(t_type==0)[0][-1]]
+    ax.axvline(point,color = 'r',linestyle = '--',linewidth = 0.5,zorder=5)
+    #Get tiny triangle to signal direction of prediction
+    limits = ax.get_ybound()
+    ax.arrow(point+0.5,limits[0] + limits[1]*0.03, 1, 0, color = 'r',head_width = limits[1]*0.05, head_length = 0.5, length_includes_head = True,zorder=6)
+    ax.arrow(point+0.5,limits[1] - limits[1]*0.03, 1, 0, color = 'r',head_width = limits[1]*0.05, head_length = 0.5, length_includes_head = True,zorder=6)
+    if _findNearest(limits,np.mean(median_sim)) == 0:
+        ax.text(point+2.0,limits[1] - limits[1]*0.03 - limits[1]*0.025, 'Prediction', color = 'r', fontsize = 'xx-small',zorder=7)
+    else:
+        ax.text(point+2.0,limits[0] + limits[1]*0.03 - limits[1]*0.025 , 'Prediction', color = 'r', fontsize = 'xx-small',zorder=7)
     
 def _findNearest(array, value):
     idx = (np.abs(array - value)).argmin()

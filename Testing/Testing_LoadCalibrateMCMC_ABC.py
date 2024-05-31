@@ -7,7 +7,8 @@ import DigitalTwin as dtwin
 import Calibrations as cal
 import ReducedModel as rm
 
-import scipy.stats as stats
+import matplotlib.pyplot as plt
+import pyabc as pyabc
 
 if __name__ == '__main__':
     #Set paths
@@ -42,7 +43,6 @@ if __name__ == '__main__':
     priors = cal.generatePriors(params)
     
     start = time.time()
-    params, sampler, model = cal.calibrateRXDIF_ABC_ROM(tumor, ROM, params, priors, dt = 0.5, plot = True)
+    test = cal.calibrateRXDIF_ABC_ROM(tumor, ROM, params, priors, dt = 0.5, options = {'n_pops': 3,'pop_size':50})
     print('MCMC time = ' + str(time.time() - start))
-    
     

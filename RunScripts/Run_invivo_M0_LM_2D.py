@@ -52,5 +52,5 @@ if __name__ == '__main__':
     #Test calibrate LM
     cal_args = {'options':{'max_it':100,'j_freq':2}}
     twin.calibrateTwin('LM_ROM', cal_args)
-    twin.predict(dt = 0.5, threshold = 0.25, plot = True, visualize = True, parallel = False)
-    twin.simulationStats(threshold = 0.25)
+    twin.simulations = twin.predict(dt = 0.5, threshold = 0.25, plot = True, visualize = True, parallel = False)
+    # twin.simulationStats(threshold = 0.25)

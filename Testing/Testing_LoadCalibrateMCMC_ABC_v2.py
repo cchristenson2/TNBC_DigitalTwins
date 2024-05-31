@@ -7,17 +7,18 @@ import DigitalTwin as dtwin
 import Calibrations as cal
 import ReducedModel as rm
 
-import scipy.stats as stats
+import matplotlib.pyplot as plt
+import pyabc as pyabc
 
 if __name__ == '__main__':
     #Set paths
     home = os.path.dirname(os.getcwd())
-    datapath = home + '\Data\PatientData_ungrouped\\'
+    datapath = home + '\Data\InSilico\LocalK_wAC_comb_randbetas\\'
     #Get tumor information in folder
     files = os.listdir(datapath)
     
     #Load the first patient
-    tumor = ld.LoadTumor_mat(datapath + files[0], crop2D = True, split = 2)
+    tumor = ld.LoadInsilicoTumor_mat(datapath + files[0], split = 2)
     
     bounds = {}
     bounds['d'] = np.array([1e-6, 1e-3])
@@ -29,7 +30,7 @@ if __name__ == '__main__':
     print('ROM build time = ' + str(time.time() - start))
     
     params = {'d':dtwin.Parameter('d','g'), 'k':dtwin.ReducedParameter('k','r',ROM['V']), 'alpha':dtwin.Parameter('alpha','g'),
-               'beta_a':dtwin.Parameter('beta_a','g'), 'beta_c': dtwin.Parameter('beta_c','g'), 'sigma':dtwin.Parameter('sigma','f')}
+               'beta_a':dtwin.Parameter('beta_a','g'), 'beta_c': dtwin.Parameter('beta_c','g')}
     
     params['d'].setBounds(np.array([1e-6,1e-3]))
     params['k'].setCoeffBounds(ROM['Library']['B']['coeff_bounds'])
@@ -37,12 +38,10 @@ if __name__ == '__main__':
     params['alpha'].setBounds(np.array([1e-6,0.8]))
     params['beta_a'].setBounds(np.array([0.35, 0.85]))
     params['beta_c'].setBounds(np.array([1.0, 5.5]))
-    params['sigma'].update(1.626)
     
     priors = cal.generatePriors(params)
     
     start = time.time()
-    params, sampler, model = cal.calibrateRXDIF_ABC_ROM(tumor, ROM, params, priors, dt = 0.5, plot = True)
+    test = cal.calibrateRXDIF_ABC_ROM(tumor, ROM, params, priors, dt = 0.5, options = {'n_pops': 10,'pop_size':1000,'epsilon':'calibrated','distance':'SSE'})
     print('MCMC time = ' + str(time.time() - start))
-    
     
