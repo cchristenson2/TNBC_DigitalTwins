@@ -10,7 +10,10 @@ import scipy.optimize as sciop
 from scipy import integrate
 
 ################################## Setup ######################################
-def problemSetup_cellMin(tumor, simulations, objectives = [], constraints = [], interval = 1, separate_doses = False, metric = 'mean', weights = None, max_dose = None, threshold = 0.0):
+def problemSetup_cellMin(tumor, simulations, objectives = [], constraints = [],
+                         interval = 1, separate_doses = False, metric = 'mean',
+                         weights = None, max_dose = None, threshold = 0.0,
+                         norm = True, tol = 1e-3, dt = 0.5):
     #Get last measured time
     t_sim_end = tumor['t_scan'][-1]
     #Get last prediction time
@@ -31,7 +34,8 @@ def problemSetup_cellMin(tumor, simulations, objectives = [], constraints = [], 
         max_dose = t_trx_future.size
         
     #Set up constraint and objective functions
-    valid_objectives = {'final_cells':{'func':qoi_TotalCells,'args':'cell_tc','kwargs':{},'name':'final_cells'},
+    valid_objectives = {'final_cells':{'func':qoi_TotalCells,'args':['cell_tc'],'kwargs':{},'name':'final_cells'},
+                        'max_cells':{'func':qoi_MaxCells,'args':['cell_tc',int(t_sim_end/dt)],'kwargs':{},'name':'final_cells'},
                         #Add more objective calls here
                         }
     call_objectives = []
@@ -42,9 +46,9 @@ def problemSetup_cellMin(tumor, simulations, objectives = [], constraints = [], 
         for elem in valid_objectives:
             call_objectives.append(valid_objectives[elem])
             
-    valid_constraints = {'cummulative_concentration':{'func':con_CummulativeConcentration,'args':'concentrations','kwargs':{'dt':0.5},'name':'cummulative_concentration'},
+    valid_constraints = {'cummulative_concentration':{'func':con_CummulativeConcentration,'args':'concentrations','kwargs':{'dt':dt},'name':'cummulative_concentration'},
                          'max_concentration':{'func':con_MaxConcentration, 'args':'concentrations','kwargs':{},'name':'max_concentration'},
-                         'ld50_toxicity':{'func':con_Toxicity_ld50,'args':'concentrations','kwargs':{'dt':0.5},'name':'ld50_toxicity'},
+                         'ld50_toxicity':{'func':con_Toxicity_ld50,'args':'concentrations','kwargs':{'dt':dt},'name':'ld50_toxicity'},
                          #Add more nonlinear constraint calls here
                          }
     call_constraints = []
@@ -88,7 +92,9 @@ def problemSetup_cellMin(tumor, simulations, objectives = [], constraints = [], 
                'lin-constraints':lin_constraints, 'nonlin-constraints':call_constraints,
                'soc_obj':soc_obj,'soc_con':soc_con,'metric':metric,'weights':w,
                'threshold':threshold, 
-               'max_dose':max_dose, 'separate_doses':separate_doses}
+               'max_dose':max_dose, 'separate_doses':separate_doses,
+               'norm':norm,'contol':tol,'dt':dt,
+               't_sim_end':t_sim_end,'t_pred_end':t_pred_end}
     
     return problem
 
@@ -97,7 +103,6 @@ def randomizeInitialGuess(twin, problem):
     while run == 1:
         doses_guess = generateGuess(problem['potential_days'].size, problem['max_dose'], problem['separate_doses'])
         test = constrainedObjective(doses_guess, problem, twin)
-        print(test)
         if test != np.inf:
             run = 0
     return doses_guess
@@ -144,6 +149,9 @@ def con_Toxicity_ld50(concentrations, dt = 0.5):
 def qoi_TotalCells(timecourse):
     return timecourse[-1]
 
+def qoi_MaxCells(timecourse, index):
+    return max(timecourse[index:])
+
 ############################### Optimizer #####################################
 def constrainedObjective(x, problem, twin, tol = 1e-3, norm = True):
     """
@@ -188,7 +196,7 @@ def objective(x, problem, twin, norm = True):
             n = 1
         else:
             n = problem['soc_obj'][problem['objectives'][i]['name']]
-        obj += _call_objectiveFunc(problem['objectives'][i], simulations, problem['metric']) * problem['weights'][i] / n
+        obj += (_call_objectiveFunc(problem['objectives'][i], simulations, problem['metric']) / n)**2 * problem['weights'][i]
     return obj
     
 
@@ -210,16 +218,67 @@ def constraints(x, problem, twin, tol = 1e-3):
             B = check.copy()
             
     return (B+tol) - A
-            
+ 
+################################ Cache ########################################
+class CachedModel:
+    def __init__(self, twin, problem):
+        self.cache = {}
+        self.twin = twin
+        self.problem = problem
+        
+    def in_cache(self, x):
+        return str(x) in self.cache
+    
+    def updateSimulation(self, x):
+        if len(self.cache.keys()) > 10:
+            self.cache.clear()
+        
+        new_days = np.concatenate((self.problem['t_trx_soc'], self.problem['potential_days']),axis = 0)
+        new_doses = np.concatenate((self.problem['doses_soc'], x), axis = 0)
+        trx_params = {'t_trx': new_days, 'doses': new_doses}
+        self.cache[str(x)] = self.twin.predict(treatment = trx_params, threshold = self.problem['threshold'])
+        
+    def objective(self, x):
+        if not self.in_cache(x):
+            self.updateSimulation(x)
+        simulations = self.cache[str(x)]       
+        obj = 0
+        for i in range(len(self.problem['objectives'])):
+            if self.problem['norm'] == False:
+                n = 1
+            else:
+                n = self.problem['soc_obj'][self.problem['objectives'][i]['name']]
+            obj += (_call_objectiveFunc(self.problem['objectives'][i], simulations, self.problem['metric']) / n)**2 * self.problem['weights'][i]
+        return obj
+    
+    def constraints(self, x):
+        if not self.in_cache(x):
+            self.updateSimulation(x)
+        simulations = self.cache[str(x)]  
+        A = []
+        B = []
+        for i in range(len(self.problem['nonlin-constraints'])):
+            test = _call_constraintFunc(self.problem['nonlin-constraints'][i], simulations, self.problem['metric'])
+            check = self.problem['soc_con'][self.problem['nonlin-constraints'][i]['name']]
+            try:
+                A = np.concatenate((A, test), axis = 0)
+                B = np.concatenate((B, check), axis = 0)
+            except:
+                A = test.copy()
+                B = check.copy()
+                
+        return (B+self.problem['contol']) - A
     
 ############################### Internal ######################################
 def _call_objectiveFunc(function, simulations, metric):
-    string = function['args']
+    string = function['args'][0]
     if string == 'cell_tc':
         data = _evalMetric(simulations['cell_tc'], metric, 'timecourse')
-        return function['func'](data, **function['kwargs'])
     elif string == 'volume_tc':
         data = _evalMetric(simulations['volume_tc'], metric, 'timecourse')
+    if len(function['args']) > 1:
+        return function['func'](data, *function['args'][1:], **function['kwargs'])
+    else:
         return function['func'](data, **function['kwargs'])
     
 def _call_constraintFunc(function, simulations, metric):

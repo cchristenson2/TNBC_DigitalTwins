@@ -315,49 +315,44 @@ class DigitalTwin:
         else:
             #More than 1 sample, we know the problem was ROM with MCMC
             #We also need to parallelize this whole loop somehow
-            # for i in range(samples):
-            #     curr = parameters[i]
-            #     trx_params = default_trx_params.copy()
-            #     trx_params = _update_trx_params(curr, default_trx_params)
-            #     N0 = self.ROM['ReducedTumor']['N_r'][:,0]
-            #     operators = lib.getOperators(curr,self.ROM)
-                
-            #     start = time.time()
-                
-            #     sim, drugs = call_dict[self.model](N0, operators, trx_params, tspan, dt)
-                
-            #     print('FWD run time = ' + str(time.time() - start))
-                
-            #     calibrations.append(self.ROM['V'] @ sim[:,t_ind[t_type==0].astype(int)])
-            #     calibrations_r.append(sim[:,t_ind[t_type==0].astype(int)])
-            #     if pred_on == True:
-            #         predictions.append(self.ROM['V'] @ sim[:,t_ind[t_type==1].astype(int)])
-            #         predictions_r.append(sim[:,t_ind[t_type==0].astype(int)])
-            #     temp1, temp2 = _maps_to_timecourse(sim, threshold, 
-            #                                         self.tumor['theta'], 
-            #                                         self.tumor['h'], 
-            #                                         reduced = True, V = self.ROM['V']) 
-            #     cell_tc = np.concatenate((cell_tc, temp1), axis = 1)
-            #     volume_tc = np.concatenate((volume_tc, temp2), axis = 1)
+            for i in range(samples):
+                curr = parameters[i]
+                trx_params = default_trx_params.copy()
+                trx_params = _update_trx_params(curr, default_trx_params)
+                N0 = self.ROM['ReducedTumor']['N_r'][:,0]
+                operators = lib.getOperators(curr,self.ROM)
+                sim, drugs = call_dict[self.model](N0, operators, trx_params, tspan, dt)
+                calibrations.append(self.ROM['V'] @ sim[:,t_ind[t_type==0].astype(int)])
+                calibrations_r.append(sim[:,t_ind[t_type==0].astype(int)])
+                if pred_on == True:
+                    predictions.append(self.ROM['V'] @ sim[:,t_ind[t_type==1].astype(int)])
+                    predictions_r.append(sim[:,t_ind[t_type==0].astype(int)])
+                temp1, temp2 = _maps_to_timecourse(sim, threshold, 
+                                                    self.tumor['theta'], 
+                                                    self.tumor['h'], 
+                                                    reduced = True, V = self.ROM['V']) 
+                cell_tc = np.concatenate((cell_tc, temp1), axis = 1)
+                volume_tc = np.concatenate((volume_tc, temp2), axis = 1)
+                drug_tc.append(drugs)
 
-            data = {'ROM':self.ROM, 'model':self.model, 
-                    'N0':self.ROM['ReducedTumor']['N_r'][:,0],
-                    'trx_params':default_trx_params.copy(), 'tspan':tspan, 'dt':dt,
-                    't_ind':t_ind, 't_type':t_type, 'threshold':threshold,
-                    'theta':self.tumor['theta'], 'h': self.tumor['h'],
-                    'pred_on':pred_on}
+            # data = {'ROM':self.ROM, 'model':self.model, 
+            #         'N0':self.ROM['ReducedTumor']['N_r'][:,0],
+            #         'trx_params':default_trx_params.copy(), 'tspan':tspan, 'dt':dt,
+            #         't_ind':t_ind, 't_type':t_type, 'threshold':threshold,
+            #         'theta':self.tumor['theta'], 'h': self.tumor['h'],
+            #         'pred_on':pred_on}
                 
-            with (concurrent.futures.ProcessPoolExecutor() as executor):
-                futures = executor.map(_evaluateParamsParallel, repeat(data), parameters, chunksize = 2)
-                for i, result in enumerate(futures):
-                    calibrations.append(result[0])
-                    calibrations_r.append(result[1])
-                    if pred_on == True:
-                        predictions.append(result[2])
-                        predictions_r.append(result[3])
-                    cell_tc = np.concatenate((cell_tc, result[4]), axis = 1)
-                    volume_tc = np.concatenate((volume_tc, result[5]), axis = 1)
-                    drug_tc.append(result[6])
+            # with (concurrent.futures.ProcessPoolExecutor() as executor):
+            #     futures = executor.map(_evaluateParamsParallel, repeat(data), parameters, chunksize = 2)
+            #     for i, result in enumerate(futures):
+            #         calibrations.append(result[0])
+            #         calibrations_r.append(result[1])
+            #         if pred_on == True:
+            #             predictions.append(result[2])
+            #             predictions_r.append(result[3])
+            #         cell_tc = np.concatenate((cell_tc, result[4]), axis = 1)
+            #         volume_tc = np.concatenate((volume_tc, result[5]), axis = 1)
+            #         drug_tc.append(result[6])
                     
         cell_measured, volume_measured = _maps_to_timecourse(N_meas, threshold, 
                                            self.tumor['theta'], self.tumor['h'], 
@@ -522,14 +517,26 @@ class DigitalTwin:
 ########################## Optimization functions #############################
     def optimize_cellMin(self, problem):
         problem['doses_guess'] = opt.randomizeInitialGuess(self,problem)
+        
+        #Method with objective and constraints combined
         # output = sciop.minimize(opt.constrainedObjective, problem['doses_guess'],
         #                         args = (problem, self), bounds = [(0,1)], constraints = problem['lin-constraints'])
         
+        #Method using individual calls to objective and constraints
+        # if problem['nonlin-constraints']:
+        #     nonlin_con = {'type':'ineq', 'fun': opt.constraints,'args':(problem,self,)}
+        #     problem['lin-constraints'].append(nonlin_con)
+        # output = sciop.minimize(opt.objective, problem['doses_guess'],
+        #                         args = (problem, self,), bounds = [(0,1)],
+        #                         constraints = problem['lin-constraints'],
+        #                         method = 'COBYLA')
+        
+        #Method using cache
+        Model = opt.CachedModel(self, problem)
         if problem['nonlin-constraints']:
-            nonlin_con = {'type':'ineq', 'fun': opt.constraints,'args':(problem,self,)}
+            nonlin_con = {'type':'ineq', 'fun': Model.constraints}
             problem['lin-constraints'].append(nonlin_con)
-        output = sciop.minimize(opt.objective, problem['doses_guess'],
-                                args = (problem, self), bounds = [(0,1)], constraints = problem['lin-constraints'])
+        output = sciop.minimize(Model.objective, problem['doses_guess'], bounds = [(0,1)], constraints = problem['lin-constraints'], method = 'COBYLA')
         
         print(output)
         new_days = np.concatenate((problem['t_trx_soc'], problem['potential_days']),axis = 0)
@@ -679,6 +686,33 @@ class ReducedParameter:
     def delete(self):
         self.value = None        
 
+def plotCI_optimized(simulations, simulations2, color1 = [0,0,1], color2 = [0.92,0.56,0.02]):
+    fig, ax = plt.subplots(2,2,layout = 'constrained',figsize = (8,5))
+    #Cell time course plot
+    _plotCI(ax[0,0], simulations['tspan'], simulations['cell_tc'], ['Time (days)', 'Cell Count','Sim.'],
+            simulations['t_type'], simulations['t_meas'], simulations['cell_measured'], color = color1)
+    #Volume time course plot
+    _plotCI(ax[0,1], simulations['tspan'], simulations['volume_tc'], ['Time (days)', 'Volume (mm^3)','Sim.'],
+            simulations['t_type'], simulations['t_meas'], simulations['volume_measured'], color = color1)
+    #Drug A and C plots need to write but not worried about it yet
+    drug_array = np.array(simulations['drug_tc'])
+    _plotCI(ax[1,0], simulations['tspan'], drug_array[:,:,0].T, ['Time (days)', 'Concentration','A.'],
+            simulations['t_type'], simulations['t_meas'], color = color1)
+    _plotCI(ax[1,1], simulations['tspan'], drug_array[:,:,1].T, ['Time (days)', 'Concentration','C.'],
+            simulations['t_type'], simulations['t_meas'], color = color1)
+    
+    _plotCI(ax[0,0], simulations2['tspan'], simulations2['cell_tc'], ['Time (days)', 'Cell Count','Sim. - opt.'],
+            simulations['t_type'], simulations['t_meas'], color = color2, arrow = False)
+    #Volume time course plot
+    _plotCI(ax[0,1], simulations2['tspan'], simulations2['volume_tc'], ['Time (days)', 'Volume (mm^3)','Sim. - opt.'],
+            simulations['t_type'], simulations['t_meas'], color = color2, arrow = False)
+    #Drug A and C plots need to write but not worried about it yet
+    drug_array = np.array(simulations2['drug_tc'])
+    _plotCI(ax[1,0], simulations2['tspan'], drug_array[:,:,0].T, ['Time (days)', 'Concentration','A. - opt.'],
+            simulations2['t_type'], simulations2['t_meas'], color = color2, arrow = False)
+    _plotCI(ax[1,1], simulations['tspan'], drug_array[:,:,1].T, ['Time (days)', 'Concentration','C. - opt.'],
+            simulations2['t_type'], simulations2['t_meas'], color = color2, arrow = False)
+    
 ###############################################################################
 ############################ Internal Functions ###############################
 ################################# General #####################################
@@ -978,27 +1012,28 @@ def _plotVoxelArray(ax, voxelarray_tumor, colorarray_tumor, voxelarray_breast, c
     plt.colorbar(sm, ax = ax,fraction=0.046, pad=0.04)
     
 ############################## Line plotting ##################################
-def _plotCI(ax, tspan, simulation, labels, t_type, t_meas, measured = None):
+def _plotCI(ax, tspan, simulation, labels, t_type, t_meas, measured = None, color = [0,0,1], arrow = True):
     if simulation.shape[1] != 1:
         #plot confidence interval stuff
         median_sim = np.median(simulation, axis = 1)
         prctile = np.percentile(simulation, [1,99,25,75], axis = 1)
-        ax.fill_between(tspan,prctile[0,:],prctile[1,:],color=[0,0,1,0.1],
+        ax.fill_between(tspan,prctile[0,:],prctile[1,:],color=color, alpha = 0.1,
                         label=labels[2] + ' - range',zorder=1)
-        ax.fill_between(tspan,prctile[2,:],prctile[3,:],color=[0,0,1,0.5],
+        ax.fill_between(tspan,prctile[2,:],prctile[3,:],color=color, alpha = 0.5,
                         label=labels[2] + ' - IQR',zorder=2)
         line_label = labels[2] + ' - median'
     else:
         median_sim = simulation
         line_label = labels[2]
-    ax.plot(tspan,  median_sim, 'b-', linewidth = 1,label=line_label,zorder=3)
+    ax.plot(tspan,  median_sim, ls = '-', color = color, linewidth = 1,label=line_label,zorder=3)
     if measured is not None:
         ax.scatter(t_meas, measured, color = 'k', label = 'Measured',zorder=4)
     
-    if np.any(t_type==1):
-        _predictionArrow(ax, t_meas, t_type, median_sim)
+    if arrow == True:
+        if np.any(t_type==1):
+            _predictionArrow(ax, t_meas, t_type, median_sim)
         
-    ax.legend(fontsize='xx-small')
+    # ax.legend(fontsize='xx-small')
     ax.set_xlabel(labels[0])
     ax.set_ylabel(labels[1])
 

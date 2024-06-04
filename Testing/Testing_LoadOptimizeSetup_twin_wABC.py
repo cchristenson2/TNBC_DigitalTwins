@@ -55,19 +55,21 @@ if __name__ == '__main__':
     twin.setParams(params)
     twin.getPriors(params)
     
-    cal_args = {'dt': 0.5, 'options': {'n_pops': 1,'pop_size':100,'epsilon':'calibrated','distance':'MSE'}}
+    cal_args = {'dt': 0.5, 'options': {'n_pops': 10,'pop_size':500,'epsilon':'calibrated','distance':'MSE','burnin':0.1}}
     
     start = time.time()
     twin.calibrateTwin('ABC_ROM', cal_args)
     print('ABC calibration time = ' + str(time.time() - start))
     
     start = time.time()
-    twin.simulations = twin.predict(dt = 0.5, threshold = 0.25, plot = False, visualize = False, parallel = False)
+    twin.simulations = twin.predict(dt = 0.5, threshold = 0.25, plot = True, visualize = False, parallel = False)
     print('Prediction time = ' + str(time.time() - start))
     
-    problem = opt.problemSetup_cellMin(twin.tumor, twin.simulations, objectives = ['final_cells'], threshold = 0.25)
+    problem = opt.problemSetup_cellMin(twin.tumor, twin.simulations, objectives = ['final_cells', 'max_cells'], threshold = 0.25)
     start = time.time()
     output = twin.optimize_cellMin(problem)
     print('Optimization time = ' + str(time.time() - start))
     optimal_simulation = twin.predict(treatment = output[1], threshold = 0.25, plot = True)
+    
+    dtwin.plotCI_optimized(twin.simulations, optimal_simulation)
     

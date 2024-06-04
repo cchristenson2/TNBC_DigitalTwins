@@ -55,9 +55,11 @@ if __name__ == '__main__':
     twin.calibrateTwin('LM_ROM', cal_args)
     twin.simulations = twin.predict(dt = 0.5, threshold = 0.25, plot = True, visualize = False, parallel = False)
     
-    problem = opt.problemSetup_cellMin(twin.tumor, twin.simulations, objectives = ['final_cells'], threshold = 0.25)
+    problem = opt.problemSetup_cellMin(twin.tumor, twin.simulations, objectives = ['final_cells', 'max_cells'], threshold = 0.25)
+    start = time.time()
     output = twin.optimize_cellMin(problem)
+    print('Optimization time = ' + str(time.time() - start))
     optimal_simulation = twin.predict(treatment = output[1], threshold = 0.25, plot = True)
-    # print(opt.constrainedObjective(problem['doses_guess'], problem, twin))
-    # print(opt.constrainedObjective(output[1]['doses'][2:], problem, twin))
+    
+    dtwin.plotCI_optimized(twin.simulations, optimal_simulation)
     
