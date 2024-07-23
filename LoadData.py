@@ -144,6 +144,21 @@ def LoadInsilicoTumor_mat(location, split = None):
        tumor['Future N'] = saved_N
        tumor['Future t_scan'] = saved_times
    return tumor    
+
+def LoadPaclitaxelRegimen(location):
+    data = _loadmat(location)
+    
+    #Pull out treatment regimen info
+    sch = data['schedule_info']
+    times = sch['times']
+    times = np.cumsum(times)
+    
+    times_pac = times[-1] + np.cumsum(sch['times_pac'])
+    
+    temp = {'t_surgery':times_pac[-1]}
+    t_trx_pac = times_pac[:-1]
+    temp['t_trx_pac'] = t_trx_pac
+    return temp
     
 ########################## Processing functions ###############################
 def downSample_2D(N, AUC, Mask, Tissues, h, inplane, inslice):

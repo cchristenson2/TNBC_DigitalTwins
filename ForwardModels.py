@@ -14,6 +14,7 @@ Last updated: 5/2/2024
 """
 
 import numpy as np
+import numba as nb
 
 ################# Example base reaction diffusion model #######################
 def RXDIF_2D(N0, k, d, t, h, dt, bcs):
@@ -334,45 +335,91 @@ def OP_RXDIF_wAC(N0, ops, trx_params, t, dt):
         
     beta, nt_trx, delivs, drugs, doses = _setupTRX(trx_params, nt, dt)
     
-    #Time stepping
-    for step in range(1,nt):
-        
-        delivs  = _updateDosing(step, nt_trx, delivs, dt)
-        #Get current dosage
-        for n in range(delivs.size):
-            drugs[step,0] = drugs[step,0] + doses[n,0]*np.exp(-1*beta[0]*delivs[n])
-            drugs[step,1] = drugs[step,1] + doses[n,1]*np.exp(-1*beta[1]*delivs[n])
-        
-        #solve for next time point
-        Sim[:,step] = Sim[:,step-1] + dt * (A@Sim[:,step-1] + B@Sim[:,step-1] 
-                                            - H@np.kron(Sim[:,step-1],Sim[:,step-1]) 
-                                            - (T[:,:,0]*drugs[step,0])@Sim[:,step-1] 
-                                            - (T[:,:,1]*drugs[step,1])@Sim[:,step-1])
-            
+    Sim, drugs = _updateLoop(nt, nt_trx, delivs, beta, doses, A, B, H, T, dt, drugs, Sim)
+           
     return Sim[:,t_], drugs
 
+def OP_RXDIF_wAC_wPac(N0, ops, trx_params, t, dt, pac_regimen):
+    #Setup matrices and indexing
+    t_ = (t / dt).astype(int)
+    n = N0.size
+    nt = np.arange(0,t[-1] + dt,dt).size
+    Sim = np.zeros([n,nt])
+    Sim[:,0] = N0
+    
+    A = ops.get('A')
+    B = ops.get('B')
+    H = ops.get('H')
+    T = ops.get('T')
+    T_pac = ops.get('T_pac')
+    #If each drug does not have its own T operator, duplicate the first
+    if np.atleast_3d(T).shape[2] == 1:
+        T = np.append(np.atleast_3d(T),np.atleast_3d(T),2)
+        
+    (beta, beta_pac, nt_trx, nt_trx_pac,
+     delivs, delivs_pac, drugs, doses, doses_pac) = _setupTRX_pac(trx_params, pac_regimen, nt, dt)
+    
+    Sim, drugs = _updateLoop_pac(nt, nt_trx, nt_trx_pac, delivs, delivs_pac, beta, beta_pac, doses, 
+                                 doses_pac, A, B, H, T, T_pac, dt, drugs, Sim)
+           
+    return Sim[:,t_], drugs
+
+############################## Testing speed up ###############################
+@nb.jit(fastmath=True)
+def _allInOne(step, nt_trx, delivs, beta, doses, curr, A, B, H, T, dt):
+    if delivs.size > 0:
+        delivs = np.add(delivs,dt)
+    if delivs.size < nt_trx.size:
+        if step - 1 >= nt_trx[delivs.size]: #Delivery occurred at previous step
+            delivs = np.append(delivs,0)  
+    
+    drugs = np.zeros((2,1))
+    for n in range(delivs.size):
+        drugs[0] = np.add(drugs[0],doses[n,0] * np.exp(-1.0*beta[0]*delivs[n]))
+        drugs[1] = np.add(drugs[1],doses[n,1] * np.exp(-1.0*beta[1]*delivs[n]))
+        
+    curr_r = curr.shape[0]
+    kron_curr = np.zeros((curr_r*curr_r))
+    for i in range(curr_r):
+        for j in range(curr_r):
+            kron_curr[i+j*curr_r] = curr[i]*curr[j]
+    return curr + dt*(A@curr + B@curr - H@kron_curr - (T[:,:,0]*drugs[0])@curr
+                      - (T[:,:,1]*drugs[1])@curr), drugs.T, delivs
+
+@nb.jit(fastmath=True)
+def _updateLoop(nt, nt_trx, delivs, beta, doses, A, B, H, T, dt, drugs, Sim):
+    for step in range(1,nt):
+        delivs  = _updateDosing(step, nt_trx, delivs, dt)
+  
+        drugs[step,:] = _getDrugConcentration(delivs,beta,doses)  
+
+        Sim[:,step] = _getUpdatedSim(Sim[:,step-1],A,B,H,T,drugs[step,:],dt)
+    return Sim, drugs
+    
+@nb.jit(fastmath=True)
+def _getDrugConcentration(delivs, beta, doses):
+    drugs = np.zeros((2,1))
+    for n in range(delivs.size):
+        drugs[0] = np.add(drugs[0],doses[n,0] * np.exp(-1.0*beta[0]*delivs[n]))
+        drugs[1] = np.add(drugs[1],doses[n,1] * np.exp(-1.0*beta[1]*delivs[n]))
+    return drugs.T
+
+@nb.jit(fastmath=True)
+def _getUpdatedSim(curr, A, B, H, T, drugs, dt):
+    curr_r = curr.shape[0]
+    kron_curr = np.zeros((curr_r*curr_r))
+    for i in range(curr_r):
+        for j in range(curr_r):
+            kron_curr[i+j*curr_r] = curr[i]*curr[j]
+    return curr + dt*(A@curr + B@curr - H@kron_curr - (T[:,:,0]*drugs[0])@curr
+                      - (T[:,:,1]*drugs[1])@curr)
+
 ################################ Internal prep ################################
+@nb.jit(fastmath=True)
 def _updateDosing(step, nt_trx, delivs, dt):
-    """
-    Parameters
-    ----------
-    step : TYPE
-        Current time index
-    nt_trx : ndarray
-        Indices of treatment times
-    delivs : ndarray
-        Contains time since deliveries that have occurred
-    dt : float
-        Euler time stepping
-
-    Returns
-    -------
-    Updated delivs
-
-    """
     #Increment all current treatments by dt
     if delivs.size > 0:
-        delivs = delivs + dt
+        delivs = np.add(delivs,dt)
     if delivs.size < nt_trx.size:
         if step - 1 >= nt_trx[delivs.size]: #Delivery occurred at previous step
             delivs = np.append(delivs,0)  
@@ -399,7 +446,100 @@ def _setupTRX(trx_params, nt, dt):
         if doses.ndim == 1:
             doses = np.expand_dims(doses,1)
             doses = np.append(doses,doses,1)
+        
     else: #All treatments get normalized dose of 1
-        doses = np.ones([nt_trx.size,2])  
+        doses = np.ones([nt_trx.size,2],dtype=float)  
+        
+    #Find duplicate days for delivery and condense dosages
+    doses, nt_trx = _condenseDuplicateDelivs(nt_trx, doses)
+    doses = _effectiveConcentration(doses)
+    
+    return beta, nt_trx, delivs, drugs, doses
 
-    return beta, nt_trx, delivs, drugs, doses        
+def _condenseDuplicateDelivs(nt_trx, doses):
+    unique_days = np.empty(0)
+    seen = set()
+    updated_doses = np.empty((0,2))
+    for i, elem in enumerate(nt_trx):
+        if elem not in seen:
+            unique_days = np.append(unique_days, elem)
+            seen.add(elem)
+            updated_doses = np.append(updated_doses, np.expand_dims(doses[i,:],0), axis = 0)
+        else:
+            updated_doses[-1,:] = updated_doses[-1,:] + doses[i,:]
+    return updated_doses, unique_days
+
+def _effectiveConcentration(doses):
+    new_doses = np.zeros(doses.shape)
+    for i in range(doses.shape[0]):
+        for j in range(2):
+            if doses[i,j] < 0.1:
+                new_doses[i,j] = 0
+            else:
+                new_doses[i,j] = doses[i,j]
+    return new_doses
+
+#################### A mess but only for paclitaxel models ####################
+def _setupTRX_pac(trx_params, pac_regimen, nt, dt):
+    if np.isscalar(trx_params.get('beta')):
+        beta = np.array([trx_params.get('beta'), trx_params.get('beta')])
+    else:
+        beta = trx_params.get('beta')  
+    beta_pac = np.mean(beta)
+        
+    #Setup treatment matrices
+    nt_trx = trx_params.get('t_trx') / dt #Indices of treatment times
+    nt_trx_pac = pac_regimen.get('t_trx_pac') / dt #Indices of treatment times
+    delivs = np.array([]) #Storage for time since deliveries that have passed
+    delivs_pac = np.array([]) #Storage for time since deliveries that have passed
+    drugs = np.zeros([nt,3])
+    
+    #Check if doses are specified
+    if 'doses' in trx_params:
+        #Check if each drug gets a different dosage at each time
+        doses = trx_params.get('doses')
+        if doses.ndim == 1:
+            doses = np.expand_dims(doses,1)
+            doses = np.append(doses,doses,1)
+    else: #All treatments get normalized dose of 1
+        doses = np.ones([nt_trx.size,2],dtype=float) 
+    if 'doses' in pac_regimen:
+        doses_pac = pac_regimen['doses']
+    else:
+        doses_pac = np.ones([nt_trx_pac.size,2],dtype=float)
+        
+    #Find duplicate days for delivery and condense dosages
+    doses, nt_trx = _condenseDuplicateDelivs(nt_trx, doses)
+    doses_pac, nt_trx_pac = _condenseDuplicateDelivs(nt_trx_pac, doses_pac)
+
+    return beta, beta_pac, nt_trx, nt_trx_pac, delivs, delivs_pac, drugs, doses, doses_pac    
+
+# @nb.jit(fastmath=True)
+def _updateLoop_pac(nt, nt_trx, nt_trx_pac, delivs, delivs_pac, beta, beta_pac,
+                    doses, doses_pac, A, B, H, T, T_pac, dt, drugs, Sim):
+    for step in range(1,nt):
+        delivs  = _updateDosing(step, nt_trx, delivs, dt)
+        delivs_pac  = _updateDosing(step, nt_trx_pac, delivs_pac, dt)
+            
+        drugs[step,[0,1]] = _getDrugConcentration(delivs,beta,doses)
+        drugs[step,2] = _getDrugConcentration_pac(delivs_pac,beta_pac,doses_pac)
+        
+        Sim[:,step] = _getUpdatedSim_pac(Sim[:,step-1],A,B,H,T,T_pac,drugs[step,:],dt)
+    return Sim, drugs
+    
+# @nb.jit(fastmath=True)
+def _getDrugConcentration_pac(delivs, beta, doses):
+    drugs = np.zeros((1,1))
+    for n in range(delivs.size):
+        drugs = np.add(drugs,doses[n,0] * np.exp(-1.0*beta*delivs[n]))
+    return drugs
+
+# @nb.jit(fastmath=True)
+def _getUpdatedSim_pac(curr, A, B, H, T, T_pac, drugs, dt):
+    curr_r = curr.shape[0]
+    kron_curr = np.zeros((curr_r*curr_r))
+    for i in range(curr_r):
+        for j in range(curr_r):
+            kron_curr[i+j*curr_r] = curr[i]*curr[j]
+    return curr + dt*(A@curr + B@curr - H@kron_curr - (T[:,:,0]*drugs[0])@curr
+                      - (T[:,:,1]*drugs[1])@curr - (T_pac*drugs[2])@curr)

@@ -130,6 +130,8 @@ def getOperators(curr, ROM):
                 operators['H'] = interpolateLocal(ROM['Library']['H'],curr[elem])
         elif elem == 'alpha':
             operators['T'] = interpolateGlobal(ROM['Library']['T'],curr[elem])
+        elif elem == 'alpha_pac':
+            operators['T_pac'] = interpolateGlobal(ROM['Library']['T'],curr[elem])
     return operators
 
 ########################## Internal constructions #############################

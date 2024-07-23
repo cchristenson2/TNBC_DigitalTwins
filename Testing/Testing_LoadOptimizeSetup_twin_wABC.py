@@ -71,5 +71,6 @@ if __name__ == '__main__':
     print('Optimization time = ' + str(time.time() - start))
     optimal_simulation = twin.predict(treatment = output[1], threshold = 0.25, plot = True)
     
-    dtwin.plotCI_optimized(twin.simulations, optimal_simulation)
-    
+    dtwin.plotCI_comparison(twin.simulations, optimal_simulation)
+    opt.plotObj_comparison(problem, twin.simulations, optimal_simulation)
+    opt.plotCon_comparison(problem, twin.simulations, optimal_simulation)

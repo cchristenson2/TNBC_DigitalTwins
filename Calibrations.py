@@ -415,7 +415,12 @@ def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = Fal
         #Calculate update
         damped_hessian = J.T @ J + l * np.diag(np.diag(J.T @ J))
         error_gradient = J.T @ np.reshape(N_true_r - N_guess_r,(-1))
-        update = la.solve(damped_hessian, error_gradient)
+        try:
+            update = la.solve(damped_hessian, error_gradient)
+        except:
+            print(l)
+            print(damped_hessian)
+            print(error_gradient)
         
         #Create test parameters
         test = copy.deepcopy(curr)
@@ -447,7 +452,8 @@ def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = Fal
             ops = copy.deepcopy(ops_test)
             N_guess_r = N_test_r.copy()
             
-            l = l / options['pass']
+            if l > 1e-15:
+                l = l / options['pass']
             
             #Check for tolerance met
             if np.abs(SSE - SSE_test) < options['e_conv']:
@@ -713,7 +719,7 @@ def calibrateRXDIF_ABC_ROM(tumor, ROM, params, priors, dt = 0.5,
     constrainedPriors = _ConstrainedPrior(priors, ROM['V'], bounds, p_locator)  
     
     sampler = pyabc.ABCSMC(_model(data, p_locator), constrainedPriors, distance,
-                            population_size = options['pop_size'])
+                            population_size = options['pop_size'], sampler = pyabc.sampler.SingleCoreSampler())
      
     # sampler = pyabc.ABCSMC(_model(data, p_locator), constrainedPriors, _distance,
     #                        population_size = options['pop_size'],
@@ -724,7 +730,6 @@ def calibrateRXDIF_ABC_ROM(tumor, ROM, params, priors, dt = 0.5,
     #                        sampler = pyabc.sampler.MappingSampler())
     
     db_path = os.path.join(tempfile.gettempdir(), "ABC_test.db")
-    # csv_path = os.path.join(tempfile.gettempdir(), "ABC_test.csv")
     sampler.new("sqlite:///" + db_path, observed_sum_stat = {"data": data['N_true_r']})
     history = sampler.run(minimum_epsilon=options['epsilon'], max_nr_populations=options['n_pops'])
     
