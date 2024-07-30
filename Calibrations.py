@@ -358,7 +358,6 @@ def calibrateRXDIF_LM_ROM(tumor, ROM, params, dt = 0.5, options = {}, plot = Fal
                 initial_guess[elem] = k_r_test
             else:
                 curr[elem] = np.mean(params[elem].getBounds())
-                # curr[elem.name] = elem.getBounds()[0]*options['delta']
         else:
             curr[elem] = params[elem].value
     for elem in required_params: #Cannot turn off proliferation right now
@@ -626,7 +625,6 @@ def calibrateRXDIF_gwMCMC_ROM(tumor, ROM, params, priors, dt = 0.5,
     moves = [(emcee.moves.StretchMove(s), 0.8), (emcee.moves.WalkMove(), 0.2)]
     if parallel == True:
         with mp.Pool() as pool:
-            # pool = mp.get_context('fork').Pool
             sampler = emcee.EnsembleSampler(nwalkers, ndim, _log_posterior, 
                                             args = (data,), 
                                             parameter_names = p_locator,  
@@ -640,9 +638,6 @@ def calibrateRXDIF_gwMCMC_ROM(tumor, ROM, params, priors, dt = 0.5,
         sampler.run_mcmc(init, nsteps, progress = options['progress'])
          
     if plot:
-        # flat_samples = sampler.get_chain(flat=True)
-        # corner.corner(flat_samples, labels = names, 
-        #               quantiles=[0.16, 0.5, 0.84], show_titles=True)
         fig, ax = plt.subplots(ndim, 1, figsize = (8, ndim), layout = 'constrained')
         full_chains = sampler.get_chain()
         for i in range(ndim):
@@ -659,7 +654,6 @@ def calibrateRXDIF_gwMCMC_ROM(tumor, ROM, params, priors, dt = 0.5,
 ########################### ROM pyABC calibration #############################
 def calibrateRXDIF_ABC_ROM(tumor, ROM, params, priors, dt = 0.5,
                               options = {}, plot = False):    
-
     #Prep measured data and get simulation details
     options_fields = ['n_pops','pop_size','thin','burnin','epsilon','distance']
     default_options = [5, 1000, 1, 0.1, 0.2,'SSE']
@@ -707,7 +701,6 @@ def calibrateRXDIF_ABC_ROM(tumor, ROM, params, priors, dt = 0.5,
         Model_r = calibrateRXDIF_LM_ROM(tumor, ROM, params)[3]
         options['epsilon'] = distance({'data':Model_r}, {'data':data['N_true_r']})
         print('Epsilon = '+str(options['epsilon']))
-
     for elem in required_params: #Cannot turn off proliferation right now
         if elem not in found_params:
             fixed_params[elem] = 0
@@ -720,21 +713,12 @@ def calibrateRXDIF_ABC_ROM(tumor, ROM, params, priors, dt = 0.5,
     
     sampler = pyabc.ABCSMC(_model(data, p_locator), constrainedPriors, distance,
                             population_size = options['pop_size'], sampler = pyabc.sampler.SingleCoreSampler())
-     
-    # sampler = pyabc.ABCSMC(_model(data, p_locator), constrainedPriors, _distance,
-    #                        population_size = options['pop_size'],
-    #                        sampler = pyabc.sampler.ConcurrentFutureSampler(cfuture_executor = concurrent.futures.ProcessPoolExecutor()))
-    
-    # sampler = pyabc.ABCSMC(_model(data, p_locator), constrainedPriors, _distance,
-    #                        population_size = options['pop_size'],
-    #                        sampler = pyabc.sampler.MappingSampler())
     
     db_path = os.path.join(tempfile.gettempdir(), "ABC_test.db")
     sampler.new("sqlite:///" + db_path, observed_sum_stat = {"data": data['N_true_r']})
     history = sampler.run(minimum_epsilon=options['epsilon'], max_nr_populations=options['n_pops'])
     
     return _unpackSamplesABC(params, history.get_distribution()[0], p_locator), data['model']
-
 
 ######################## Priors for MCMC calibration ##########################
 def generatePriors(params):

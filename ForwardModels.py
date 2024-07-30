@@ -365,28 +365,7 @@ def OP_RXDIF_wAC_wPac(N0, ops, trx_params, t, dt, pac_regimen):
     return Sim[:,t_], drugs
 
 ############################## Testing speed up ###############################
-@nb.jit(fastmath=True)
-def _allInOne(step, nt_trx, delivs, beta, doses, curr, A, B, H, T, dt):
-    if delivs.size > 0:
-        delivs = np.add(delivs,dt)
-    if delivs.size < nt_trx.size:
-        if step - 1 >= nt_trx[delivs.size]: #Delivery occurred at previous step
-            delivs = np.append(delivs,0)  
-    
-    drugs = np.zeros((2,1))
-    for n in range(delivs.size):
-        drugs[0] = np.add(drugs[0],doses[n,0] * np.exp(-1.0*beta[0]*delivs[n]))
-        drugs[1] = np.add(drugs[1],doses[n,1] * np.exp(-1.0*beta[1]*delivs[n]))
-        
-    curr_r = curr.shape[0]
-    kron_curr = np.zeros((curr_r*curr_r))
-    for i in range(curr_r):
-        for j in range(curr_r):
-            kron_curr[i+j*curr_r] = curr[i]*curr[j]
-    return curr + dt*(A@curr + B@curr - H@kron_curr - (T[:,:,0]*drugs[0])@curr
-                      - (T[:,:,1]*drugs[1])@curr), drugs.T, delivs
-
-@nb.jit(fastmath=True)
+@nb.jit(fastmath=True,cache=True)
 def _updateLoop(nt, nt_trx, delivs, beta, doses, A, B, H, T, dt, drugs, Sim):
     for step in range(1,nt):
         delivs  = _updateDosing(step, nt_trx, delivs, dt)
@@ -396,7 +375,7 @@ def _updateLoop(nt, nt_trx, delivs, beta, doses, A, B, H, T, dt, drugs, Sim):
         Sim[:,step] = _getUpdatedSim(Sim[:,step-1],A,B,H,T,drugs[step,:],dt)
     return Sim, drugs
     
-@nb.jit(fastmath=True)
+@nb.jit(fastmath=True,cache=True)
 def _getDrugConcentration(delivs, beta, doses):
     drugs = np.zeros((2,1))
     for n in range(delivs.size):
@@ -404,7 +383,7 @@ def _getDrugConcentration(delivs, beta, doses):
         drugs[1] = np.add(drugs[1],doses[n,1] * np.exp(-1.0*beta[1]*delivs[n]))
     return drugs.T
 
-@nb.jit(fastmath=True)
+@nb.jit(fastmath=True,cache=True)
 def _getUpdatedSim(curr, A, B, H, T, drugs, dt):
     curr_r = curr.shape[0]
     kron_curr = np.zeros((curr_r*curr_r))
@@ -415,7 +394,7 @@ def _getUpdatedSim(curr, A, B, H, T, drugs, dt):
                       - (T[:,:,1]*drugs[1])@curr)
 
 ################################ Internal prep ################################
-@nb.jit(fastmath=True)
+@nb.jit(fastmath=True,cache=True)
 def _updateDosing(step, nt_trx, delivs, dt):
     #Increment all current treatments by dt
     if delivs.size > 0:

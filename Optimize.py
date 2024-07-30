@@ -37,11 +37,12 @@ def problemSetup_cellMin(twin, objectives = [], constraints = [],
     #Set up constraint and objective functions
     valid_objectives = {'final_cells':{'func':qoi_TotalCells,'args':['cell_tc'],'kwargs':{},'name':'final_cells','title':'Final cell count'},
                         'max_cells':{'func':qoi_MaxCells,'args':['cell_tc','index'],'kwargs':{},'name':'max_cells','title':'Max cell count'},
+                        'total_dose':{'func':con_TotalDose,'args':['trx_params'],'kwargs':{},'name':'total_dose','title':'Total dose'},
                         'cumulative_cells':{'func':qoi_CumulativeCells,'args':['cell_tc',dt],'kwargs':{},'name':'cumulative_cells','title':'Cumulative cell count'},
                         'midpoint_cells':{'func':qoi_MidCells,'args':['cell_tc','mid_index'],'kwargs':{},'name':'midpoint_cells','title':'Midpoint cell count'},
                         'third_cells':{'func':qoi_MidCells,'args':['cell_tc','third_index'],'kwargs':{},'name':'third_cells','title':'33% cell count'},
                         'twothirds_cells':{'func':qoi_MidCells,'args':['cell_tc','twothird_index'],'kwargs':{},'name':'twothirds_cells','title':'66% cell count'},
-                        'time_to_prog':{'func':qoi_TTP,'args':['cell_tc',dt],'kwargs':{},'name':'time_to_prog','title':'Time to progression'}
+                        'time_to_prog':{'func':qoi_TTP,'args':['cell_tc',dt],'kwargs':{},'name':'time_to_prog','title':'Time to progression'},
                         #Add more objective calls here
                         }
     call_objectives = []
@@ -54,82 +55,23 @@ def problemSetup_cellMin(twin, objectives = [], constraints = [],
         for elem in valid_objectives:
             call_objectives.append(valid_objectives[elem])
             
-    valid_constraints = {'cumulative_concentration':{'func':con_CumulativeConcentration,
-                                                      'args':['concentrations'],
-                                                      'kwargs':{'dt':dt},
-                                                      'name':'cumulative_concentration',
-                                                      'title':'Cumulative Concentration',
-                                                      'ylabel':'Concentration * days',
-                                                      'tol':1e-3},
-                         'max_concentration':{'func':con_MaxConcentration, 
-                                              'args':['concentrations'],
-                                              'kwargs':{},
-                                              'name':'max_concentration',
-                                              'title':'Max Concentration',
-                                              'ylabel':'Concentration',
-                                              'tol':1e-3},
-                         'ld50_toxicity':{'func':con_Toxicity_ld50,
-                                          'args':['concentrations'],
-                                          'kwargs':{'dt':dt},
-                                          'name':'ld50_toxicity',
-                                          'title':'LD50 Toxicity',
-                                          'ylabel':'Toxicity estimate',
-                                          'tol':1e-3},
-                         'gradient':{'func':con_Gradient,'args':['cells'],
-                                     'kwargs':{'dt':dt}, 'name':'gradient',
-                                     'title':'Gradient','ylabel':'cells/day',
-                                     'tol':1e-3},
-                         'doses':{'func':None,'args':['doses'],'kwargs':{},
-                                  'name':'doses','title':'Total dose',
-                                  'ylabel':'Dose',
-                                  'tol':0},
-                         'cumulative_cells':{'func':con_CumulativeCells,
-                                             'args':['cells',dt],
-                                             'kwargs':{},
-                                             'name':'cumulative_cells',
-                                             'title':'Cumulative cells',
-                                             'ylabel':'cells * days',
-                                             'tol':cum_cells_tol},
-                         'midpoint_cells':{'func':qoi_MidCells,
-                                           'args':['cells','mid_index'],
-                                           'kwargs':{},
-                                           'name':'midpoint_cells',
-                                           'title':'Midpoint cell count',
-                                           'ylabel':'cells',
-                                           'tol':1e-3},
-                         'third_cells':{'func':qoi_MidCells,
-                                           'args':['cells','third_index'],
-                                           'kwargs':{},
-                                           'name':'third_cells',
-                                           'title':'1/3 cell count',
-                                           'ylabel':'cells',
-                                           'tol':1e-3},
-                         'twothirds_cells':{'func':qoi_MidCells,
-                                           'args':['cells','twothirds_index'],
-                                           'kwargs':{},
-                                           'name':'twothirds_cells',
-                                           'title':'2/3 cell count',
-                                           'ylabel':'cells',
-                                           'tol':1e-3},
-                         'V3_cells':{'func':qoi_MidCells,
-                                           'args':['cells','V3_index'],
-                                           'kwargs':{},
-                                           'name':'V3_cells',
-                                           'title':'Visit 3 cell count',
-                                           'ylabel':'cells',
-                                           'tol':1e-3},
+    valid_constraints = {'total_dose':{'func':con_TotalDose,'args':['trx_params'],'kwargs':{},'name':'total_dose','title':'Total dose','ylabel':'Dose (over 4 cycles)','tol':1e-5},
+                         'max_concentration':{'func':con_MaxConcentration,'args':['concentrations'],'kwargs':{},'name':'max_concentration','title':'Max Concentration','ylabel':'Concentration','tol':1e-5},
+                         'ld50_toxicity':{'func':con_Toxicity_ld50,'args':['concentrations'],'kwargs':{'dt':dt},'name':'ld50_toxicity','title':'LD50 Toxicity','ylabel':'Toxicity estimate','tol':1e-5},
+                         'final_cells':{'func':qoi_TotalCells,'args':['cells'],'kwargs':{},'name':'final_cells','title':'Final cells','ylabel':'cells','tol':1e-5},
+                         'cumulative_concentration':{'func':con_CumulativeConcentration,'args':['concentrations'],'kwargs':{'dt':dt},'name':'cumulative_concentration','title':'Cumulative Concentration','ylabel':'Concentration * days','tol':1e-5},
+                         'gradient':{'func':con_Gradient,'args':['cells'],'kwargs':{'dt':dt}, 'name':'gradient','title':'Gradient','ylabel':'cells/day','tol':1e-5},
+                         'cumulative_cells':{'func':con_CumulativeCells,'args':['cells',dt],'kwargs':{},'name':'cumulative_cells','title':'Cumulative cells','ylabel':'cells * days','tol':cum_cells_tol},
+                         'midpoint_cells':{'func':qoi_MidCells,'args':['cells','mid_index'],'kwargs':{},'name':'midpoint_cells','title':'Midpoint cell count','ylabel':'cells','tol':1e-5},
+                         'third_cells':{'func':qoi_MidCells,'args':['cells','third_index'],'kwargs':{},'name':'third_cells','title':'1/3 cell count','ylabel':'cells','tol':1e-5},
+                         'twothirds_cells':{'func':qoi_MidCells,'args':['cells','twothirds_index'],'kwargs':{},'name':'twothirds_cells','title':'2/3 cell count','ylabel':'cells','tol':1e-5},
+                         'V3_cells':{'func':qoi_MidCells,'args':['cells','V3_index'],'kwargs':{},'name':'V3_cells','title':'Visit 3 cell count','ylabel':'cells','tol':1e-5},
                          #Add more nonlinear constraint calls here
                          }
     call_constraints = []
     lin_constraints = []
     for elem in constraints:
-        if elem != 'total_dose':
-            call_constraints.append(valid_constraints[elem])
-        else:
-            if cycles == False:
-                lin_constraints.append({'type':'ineq', 'fun':lambda x: max_dose - sum(x)})
-            else:
-                lin_constraints.append({'type':'ineq', 'fun':lambda x: max_dose/2 - sum(x)})
+        call_constraints.append(valid_constraints[elem])
     
     simulations = twin.predict(dt = dt, threshold = threshold, estimated = estimated, partial = partial, change_t = t_pred_end)
         
@@ -137,6 +79,8 @@ def problemSetup_cellMin(twin, objectives = [], constraints = [],
     soc_obj = {}
     for i in range(len(call_objectives)):
         soc_obj[call_objectives[i]['name']] = _call_objectiveFunc(call_objectives[i], simulations, metric)
+        if separate_doses == True and call_objectives[i]['name'] == 'total_dose':
+            soc_obj[call_objectives[i]['name']] += soc_obj[call_objectives[i]['name']]
         
     #Evaluate constraints for SOC protocol
     soc_con = {}
@@ -148,13 +92,9 @@ def problemSetup_cellMin(twin, objectives = [], constraints = [],
             temp = _call_constraintFunc(call_constraints[i], simulations, metric)
         soc_con[call_constraints[i]['name']] = temp
         tol_vec = np.append(tol_vec, temp * call_constraints[i]['tol'])
-    
-    soc_con = {}
-    for i in range(len(call_constraints)):
-        if call_constraints[i]['name'] == 'gradient':
-            soc_con[call_constraints[i]['name']] = np.zeros(2)
-        else:
-            soc_con[call_constraints[i]['name']] = _call_constraintFunc(call_constraints[i], simulations, metric)
+        if call_constraints[i]['name'] == 'total_dose' and separate_doses == True:
+            tol_vec = np.append(tol_vec, temp * call_constraints[i]['tol'])
+            soc_con[call_constraints[i]['name']] = np.array([temp, temp])
     
     if weights is None:
         w = np.ones(len(call_objectives))
@@ -199,11 +139,19 @@ def generateGuess(n, max_dose, separate_doses, cycles):
         max_dose = max_dose/2
         n = int(n/2) 
     x = np.random.rand(n)
-    return x * (max_dose / np.sum(x, axis = 0))
+    x_norm = x * (max_dose / np.sum(x, axis = 0))
+    if separate_doses == True:
+        return np.append(x_norm , x_norm , axis = 0)
+    else:
+        return x_norm 
 
 def reorganize_doses(x, problem):
     if problem['separate_doses'] == True:
-        x = np.reshape(x,(-1,2))
+        n = int(x.size/2)
+        temp = np.zeros((n,2))
+        temp[:,0] = x[:n]
+        temp[:,1] = x[n:]
+        x = temp.copy()
     if problem['cycles'] == True:
         x = np.concatenate((x, x), axis = 0)
     return x
@@ -239,7 +187,7 @@ def con_TotalDose(trx_params):
     if 'doses' not in trx_params.keys():
         return trx_params['t_trx'].size
     else:
-        return sum(trx_params['doses'])
+        return np.sum(trx_params['doses'], axis = 0)
 
 #Concentration based constraints
 def con_CumulativeConcentration(concentrations, dt = 0.5):
@@ -317,7 +265,7 @@ def constrainedObjective(x, problem, twin, tol = 1e-15, norm = False):
         check = problem['soc_con'][problem['nonlin-constraints'][i]['name']]
         A = np.append(A, test)
         B = np.append(B, check) 
-        
+    
     if np.any(A > B+problem['tol_vec']):
         return np.inf, B+problem['tol_vec'] - A
     
@@ -361,7 +309,10 @@ class CachedModel:
                 n = 1
             else:
                 n = self.problem['soc_obj'][self.problem['objectives'][i]['name']]
-            obj += (_call_objectiveFunc(self.problem['objectives'][i], simulations, self.problem['metric']) / n) * self.problem['weights'][i]
+            if self.problem['separate_doses'] != True:
+                obj += (_call_objectiveFunc(self.problem['objectives'][i], simulations, self.problem['metric']) / n) * self.problem['weights'][i]
+            else:
+                obj += np.sum(_call_objectiveFunc(self.problem['objectives'][i], simulations, self.problem['metric']) / n) * self.problem['weights'][i]
         return obj
     
     def constraints(self, x):
@@ -390,6 +341,8 @@ def _call_objectiveFunc(function, simulations, metric):
         data = _evalMetric(simulations['cell_tc'], metric, 'timecourse')
     elif string == 'volume_tc':
         data = _evalMetric(simulations['volume_tc'], metric, 'timecourse')
+    elif string == 'trx_params':
+        data = simulations['trx_params']
         
     if len(function['args']) > 1:
         #Currently assumes max time course constraint
@@ -415,10 +368,10 @@ def _call_constraintFunc(function, simulations, metric):
     elif string == 'concentrations':
         data = _evalMetric(simulations['drug_tc'], metric, 'concentration')
         return function['func'](data, **function['kwargs'])
-    elif string == 'doses':
-        return sum(simulations['doses'])
     elif string == 'cells':
         data = _evalMetric(simulations['cell_tc'], metric, 'timecourse')
+        if function['name'] == 'final_cells':
+            return function['func'](data, **function['kwargs'])
         if function['name'] == 'cumulative_cells':
             index = simulations['t_pred_index']
             return function['func'](data, index, *function['args'][1:], **function['kwargs'])
@@ -529,47 +482,66 @@ def plotObj_comparison(problem, simulation1, simulation2, color1 = [0,0,1], colo
         function = problem['objectives'][i]
         data1 = simulation1[function['args'][0]]
         data2 = simulation2[function['args'][0]]
-        temp1 = []
-        temp2 = []
-        for j in range(data1.shape[1]):
-            if len(function['args']) > 1:
-                #Currently assumes max time course constraint
-                if function['name'] == 'max_cells':
-                    temp1.append(function['func'](data1[:,j],simulation1['t_pred_index'], **function['kwargs']))
-                    temp2.append(function['func'](data2[:,j],simulation2['t_pred_index'], **function['kwargs']))
-                elif function['name'] == 'midpoint_cells':
-                    temp1.append(function['func'](data1[:,j],simulation1['t_mid_index'], **function['kwargs']))
-                    temp2.append(function['func'](data2[:,j],simulation2['t_mid_index'], **function['kwargs']))
-                elif function['name'] == 'third_cells':
-                    temp1.append(function['func'](data1[:,j],simulation1['t_third_index'], **function['kwargs']))
-                    temp2.append(function['func'](data2[:,j],simulation2['t_third_index'], **function['kwargs']))
-                elif function['name'] == 'twothirds_cells':
-                    temp1.append(function['func'](data1[:,j],simulation1['t_twothirds_index'], **function['kwargs']))
-                    temp2.append(function['func'](data2[:,j],simulation2['t_twothirds_index'], **function['kwargs']))
-                elif function['name'] == 'time_to_prog':
-                    temp1.append(function['func'](data1[:,j],*function['args'][1:],simulation1['ttp_index'], **function['kwargs']))
-                    temp2.append(function['func'](data2[:,j],*function['args'][1:],simulation2['ttp_index'], **function['kwargs']))
+        if function['name'] != 'total_dose':
+            temp1 = []
+            temp2 = []
+            for j in range(data1.shape[1]):
+                if len(function['args']) > 1:
+                    #Currently assumes max time course constraint
+                    if function['name'] == 'max_cells':
+                        temp1.append(function['func'](data1[:,j],simulation1['t_pred_index'], **function['kwargs']))
+                        temp2.append(function['func'](data2[:,j],simulation2['t_pred_index'], **function['kwargs']))
+                    elif function['name'] == 'midpoint_cells':
+                        temp1.append(function['func'](data1[:,j],simulation1['t_mid_index'], **function['kwargs']))
+                        temp2.append(function['func'](data2[:,j],simulation2['t_mid_index'], **function['kwargs']))
+                    elif function['name'] == 'third_cells':
+                        temp1.append(function['func'](data1[:,j],simulation1['t_third_index'], **function['kwargs']))
+                        temp2.append(function['func'](data2[:,j],simulation2['t_third_index'], **function['kwargs']))
+                    elif function['name'] == 'twothirds_cells':
+                        temp1.append(function['func'](data1[:,j],simulation1['t_twothirds_index'], **function['kwargs']))
+                        temp2.append(function['func'](data2[:,j],simulation2['t_twothirds_index'], **function['kwargs']))
+                    elif function['name'] == 'time_to_prog':
+                        temp1.append(function['func'](data1[:,j],*function['args'][1:],simulation1['ttp_index'], **function['kwargs']))
+                        temp2.append(function['func'](data2[:,j],*function['args'][1:],simulation2['ttp_index'], **function['kwargs']))
+                    else:
+                        temp1.append(function['func'](data1[:,j],simulation1['t_pred_index'], *function['args'][1:], **function['kwargs']))
+                        temp2.append(function['func'](data2[:,j],simulation2['t_pred_index'], *function['args'][1:], **function['kwargs']))
                 else:
-                    temp1.append(function['func'](data1[:,j],simulation1['t_pred_index'], *function['args'][1:], **function['kwargs']))
-                    temp2.append(function['func'](data2[:,j],simulation2['t_pred_index'], *function['args'][1:], **function['kwargs']))
+                    temp1.append(function['func'](data1[:,j],**function['kwargs']))
+                    temp2.append(function['func'](data2[:,j],**function['kwargs']))
+            
+            try:
+                ax[i].hist(temp1,bins=15,color = color1,label='SoC',alpha=0.6)[1] 
+                ax[i].hist(temp2,bins=15,color = color2,label='Opt.',alpha=0.6)
+                ax[i].legend(fontsize='xx-small')
+                ax[i].set_xlabel(function['title']+'; w = '+str(problem['weights'][i]), fontsize='small')
+                ax[i].set_ylabel('Counts')
+            except:
+                ax.hist(temp1,bins=15,color = color1,label='SoC',alpha=0.6)[1] 
+                ax.hist(temp2,bins=15,color = color2,label='Opt.',alpha=0.6)
+                ax.legend(fontsize='xx-small')
+                ax.set_xlabel(function['title'])
+                ax.set_ylabel('Counts')  
+        else:
+            temp1 = function['func'](data1)
+            temp2 = function['func'](data2)
+            if problem['separate_doses'] == False:
+                ax[i].bar(['SoC','Opt.'],[temp1,temp2],color=[color1,color2])
+                ax[i].set_xlabel('Schedule')
             else:
-                temp1.append(function['func'](data1[:,j],**function['kwargs']))
-                temp2.append(function['func'](data2[:,j],**function['kwargs']))
-        try:
-            ax[i].hist(temp1,bins=15,color = color1,label='SoC',alpha=0.6)[1] 
-            ax[i].hist(temp2,bins=15,color = color2,label='Opt.',alpha=0.6)
-            ax[i].legend(fontsize='xx-small')
-            ax[i].set_xlabel(function['title']+'; w = '+str(problem['weights'][i]), fontsize='small')
-            ax[i].set_ylabel('Counts')
-        except:
-            ax.hist(temp1,bins=15,color = color1,label='SoC',alpha=0.6)[1] 
-            ax.hist(temp2,bins=15,color = color2,label='Opt.',alpha=0.6)
-            ax.legend(fontsize='xx-small')
-            ax.set_xlabel(function['title'])
-            ax.set_ylabel('Counts')    
+                temp1 = np.array([temp1, temp1])
+                ind = np.arange(2)
+                width = 0.35
+                ax[i].bar(ind, np.mean(temp1, axis = 0), width, color = color1, label = 'SoC')
+                ax[i].bar(ind + width, np.mean(temp2, axis = 0), width, color = color2, label = 'Opt.')
+                ax[i].set_xticks(ind + width/2, labels = ['A.','C.'])
+                ax[i].set_xlabel('Drug type')
+                ax[i].legend(fontsize='x-small',loc='lower right')
+            ax[i].set_ylabel('Dose (over 4 cycles)')
         obj1.append(temp1)
         obj2.append(temp2)
     return obj1, obj2
+
 def plotCon_comparison(problem, simulation1, simulation2, color1 = [0,0,1], color2 = [0.92,0.56,0.02]):
     num_l = len(problem['lin-constraints'])
     num_nl = len(problem['nonlin-constraints'])
@@ -662,6 +634,26 @@ def plotCon_comparison(problem, simulation1, simulation2, color1 = [0,0,1], colo
                     temp2[j] = function['func'](cells2[:,j],index2, **function['kwargs'])
                 ax[i].bar(['SoC','Opt.'],[np.mean(temp1),np.mean(temp2)], yerr = [np.std(temp1),np.std(temp2)],color=[color1,color2])
                 ax[i].set_ylim(bottom = 0)
+            elif function['name'] == 'total_dose':
+                temp1 = function['func'](simulation1['trx_params'])
+                temp2 = function['func'](simulation2['trx_params'])
+                if problem['separate_doses'] == False:
+                    ax[i].bar(['SoC','Opt.'],[temp1,temp2],color=[color1,color2])
+                else:
+                    temp1 = np.array([temp1, temp1])
+                    ind = np.arange(2)
+                    width = 0.35
+                    ax[i].bar(ind, np.mean(temp1, axis = 0), width, color = color1, label = 'SoC')
+                    ax[i].bar(ind + width, np.mean(temp2, axis = 0), width, color = color2, label = 'Opt.')
+            elif function['name'] == 'final_cells':
+                temp1 = np.empty((cells1.shape[1]))
+                temp2 = np.empty((cells1.shape[1]))
+                for j in range(cells1.shape[1]):
+                    temp1[j] = function['func'](cells1[:,j],**function['kwargs'])
+                    temp2[j] = function['func'](cells2[:,j],**function['kwargs'])
+                ax[i].bar(['SoC','Opt.'],[np.mean(temp1),np.mean(temp2)], yerr = [np.std(temp1),np.std(temp2)],color=[color1,color2])
+                ax[i].set_ylim(bottom = 0)
+                
             else:
                 temp1 = np.empty((data1.shape[0],2))
                 temp2 = np.empty((data1.shape[0],2))
@@ -678,7 +670,9 @@ def plotCon_comparison(problem, simulation1, simulation2, color1 = [0,0,1], colo
                 ax[i].set_xticks(ind + width/2, labels = ['33%','66%'])
                 ax[i].set_xlabel('Time to end')
                 ax[i].legend(fontsize='x-small',loc='lower right')
-            elif function['name'] == 'cumulative_cells' or 'midpoint_cells' or 'third_cells' or 'twothirds_cells':
+            elif any(function['name'] in x for x in ['cumulative_cells','midpoint_cells','third_cells','twothirds_cells','final_cells']):
+                ax[i].set_xlabel('Schedule')
+            elif function['name'] == 'total_dose' and problem['separate_doses'] == False:
                 ax[i].set_xlabel('Schedule')
             else:
                 ax[i].set_xticks(ind + width/2, labels = ['A.','C.'])

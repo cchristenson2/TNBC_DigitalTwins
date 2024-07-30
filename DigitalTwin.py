@@ -20,6 +20,11 @@ Last updated: 5/23/2024
 import numpy as np
 import copy
 import matplotlib.pyplot as plt
+plt.rcParams['font.family'] = 'Times New Roman'
+plt.rcParams['mathtext.fontset'] = 'custom'
+plt.rcParams['mathtext.rm'] = 'Times New Roman'
+plt.rcParams['mathtext.it'] = 'Times New Roman:italic'
+plt.rcParams['mathtext.bf'] = 'Times New Roman:bold'
 import matplotlib.cm as cm
 import matplotlib.colors as col
 import scipy.ndimage as ndi
@@ -29,7 +34,6 @@ import concurrent.futures
 from itertools import repeat
 import time
 import os
-from gekko import GEKKO
 
 import LoadData as ld
 import ReducedModel as rm
@@ -37,7 +41,6 @@ import ForwardModels as fwd
 import Calibrations as cal
 import Library as lib
 import Optimize as opt
-import Optimize_MIP as opt_mip
 
 ############################# Global variables ################################
 call_dict = {
@@ -205,7 +208,8 @@ class DigitalTwin:
 ########################## Prediction and stats ###############################  
     def predict(self, dt = 0.5, threshold = 0.20, plot = False,
                 visualize = False, parallel = False, treatment = None,
-                partial = False, estimated = False, change_t = None):
+                partial = False, estimated = False, change_t = None,
+                MCMC_visualization = False):
         """
         Runs simulations for all parameter samples based off type of model and
         calibration used. Plots if requested but always stores outputs in the
@@ -405,7 +409,7 @@ class DigitalTwin:
 
         #Plot outputs if requested - mean sample visualized if MCMC was used
         if visualize == True:
-            self.simulationVisualization(simulations)
+            self.simulationVisualization(simulations, MCMC_vis = MCMC_visualization)
                     
         if plot == True:
             self.simulationPlotting(simulations)
@@ -477,12 +481,19 @@ class DigitalTwin:
                     num += 1
                 elif self.params[elem].assignment.lower() == 'r':
                     num += self.ROM['V'].shape[1]
-            fig, ax = plt.subplots(1, num, layout = "constrained", figsize = (num*2,6))
+            fig, ax = plt.subplots(1, num, layout = "constrained", figsize = (num*1.25,1.5))
             offset = 0
             for i, elem in enumerate(self.params):
                 if self.params[elem].assignment.lower() == 'g':
-                    ax[i+offset].hist(self.params[elem].get().reshape(-1), bins = 20, density = True, label = 'Samples')
-                    ax[i+offset].set_title(elem)
+                    ax[i+offset].hist(self.params[elem].get().reshape(-1), bins = 20, density = True, label = 'Samples', color = [0,0,1])
+                    if elem == 'alpha':
+                        ax[i+offset].set_title(r'$\alpha$')
+                    elif elem == 'beta_a':
+                        ax[i+offset].set_title(r'$\beta_A$')
+                    elif elem == 'beta_c':
+                        ax[i+offset].set_title(r'$\beta_C$')
+                    else:
+                        ax[i+offset].set_title(elem, style='italic')
                     try:
                         x = np.linspace(self.params[elem].getBounds()[0], self.params[elem].getBounds()[1], 100)
                         y = self.priors[elem].pdf(x)
@@ -491,8 +502,9 @@ class DigitalTwin:
                         pass
                 elif self.params[elem].assignment.lower() == 'r':
                     for j in range(self.ROM['V'].shape[1]):
-                        ax[i+offset].hist(self.params[elem].get()[j,:], bins = 20, density = True, label = 'Samples')
-                        ax[i+offset].set_title(elem + str(j))
+                        ax[i+offset].hist(self.params[elem].get()[j,:], bins = 20, density = True, label = 'Samples', color = [0,0,1])
+                        string = '$\\it{' + elem + '}_{r,' + str(j) +'}$'
+                        ax[i+offset].set_title(r"{}".format(string), style='italic')
                         try:
                             x = np.linspace(self.params[elem].getCoeffBounds()[j,0], self.params[elem].getCoeffBounds()[j,1], 100)
                             y = self.priors[elem + str(j)].pdf(x)
@@ -501,11 +513,14 @@ class DigitalTwin:
                             pass
                         if j < self.ROM['V'].shape[1] - 1:
                             offset += 1
+                if i == 0:
+                    ax[i+offset].set_ylabel('Counts')
+                    ax[i+offset].legend(fontsize='xx-small')
 
-    def simulationVisualization(self, simulations = None):
+    def simulationVisualization(self, simulations = None, MCMC_vis = False):
         if simulations == None:
             simulations = self.simulations
-        if simulations['samples'] > 1:
+        if simulations['samples'] > 1 and MCMC_vis == True:
             #Since we only have samples with ROM we can visualize the reduced coefficients here.
             _visualize_MCMC_error(simulations['N_r_cal'], simulations['N_r_pred'],
                                   np.array(simulations['maps_r_cal']), np.array(simulations['maps_r_pred']),
@@ -517,12 +532,13 @@ class DigitalTwin:
                           simulations['prediction'], self.tumor)
         else:
             #Will make changes to 3D visualization, not a fan of current setup
-            _visualize_3d(simulations['N_cal'], simulations['N_pred'],
-                          simulations['maps_cal'], simulations['maps_pred'],
-                          simulations['prediction'], self.tumor, cut = 'axial')
-            _visualize_3d(simulations['N_cal'], simulations['N_pred'],
-                          simulations['maps_cal'], simulations['maps_pred'],
-                          simulations['prediction'], self.tumor, cut = 'sagittal')
+            print()
+            # _visualize_3d(simulations['N_cal'], simulations['N_pred'],
+            #               simulations['maps_cal'], simulations['maps_pred'],
+            #               simulations['prediction'], self.tumor, cut = 'axial')
+            # _visualize_3d(simulations['N_cal'], simulations['N_pred'],
+            #               simulations['maps_cal'], simulations['maps_pred'],
+            #               simulations['prediction'], self.tumor, cut = 'sagittal')
             
     def simulationPlotting(self, simulations = None):
         if simulations == None:
@@ -530,26 +546,29 @@ class DigitalTwin:
             
         fig, ax = plt.subplots(2,2,layout = 'constrained',figsize = (8,5))
         #Cell time course plot
-        _plotCI(ax[0,0], simulations['tspan'], simulations['cell_tc'], ['Time (days)', 'Cell Count','Simulation'],
+        _plotCI(ax[0,0], simulations['tspan'], simulations['cell_tc'], ['Time (days)', 'Cell Count','Sim.'],
                 simulations['t_type'], simulations['t_meas'], simulations['cell_measured'])
         #Volume time course plot
-        _plotCI(ax[0,1], simulations['tspan'], simulations['volume_tc'], ['Time (days)', 'Volume (mm^3)','Simulation'],
+        _plotCI(ax[0,1], simulations['tspan'], simulations['volume_tc'], ['Time (days)', 'Volume (mm^3)','Sim.'],
                 simulations['t_type'], simulations['t_meas'], simulations['volume_measured'])
         #Drug A and C plots need to write but not worried about it yet
         drug_array = np.array(simulations['drug_tc'])
-        _plotCI(ax[1,0], simulations['tspan'], drug_array[:,:,0].T, ['Time (days)', 'Concentration','Adriamycin'],
+        _plotCI(ax[1,0], simulations['tspan'], drug_array[:,:,0].T, ['Time (days)', 'A. concentration','Sim.'],
                 simulations['t_type'], simulations['t_meas'])
-        _plotCI(ax[1,1], simulations['tspan'], drug_array[:,:,1].T, ['Time (days)', 'Concentration','Cyclophosphamide'],
+        _plotCI(ax[1,1], simulations['tspan'], drug_array[:,:,1].T, ['Time (days)', 'C. concentration','Sim.'],
                 simulations['t_type'], simulations['t_meas'])
 
 ########################## Optimization functions #############################
     def optimize_cellMin(self, problem, method, initial_guess = 1, test_guess = False):
         if initial_guess == 1:
             problem['doses_guess'] = opt.socInitialGuess(self,problem)
-            print('Using standard of care as guess')
+            # print('Using standard of care as guess')
         elif initial_guess == 2:
             problem['doses_guess'] = opt.randomizeInitialGuess(self,problem)
-            print('Initial guess found')
+            # print('Initial guess found')
+        elif initial_guess == 3:
+            print()
+            # print('Start point is previous result')
         
         if test_guess == True:
             x = opt.reorganize_doses(problem['doses_guess'], problem)
@@ -561,6 +580,7 @@ class DigitalTwin:
                                             change_t = problem['t_pred_end'])
         else:
             test_simulations = []
+            
         Model = opt.CachedModel(self, problem)
         
         if method != 3:
@@ -585,19 +605,18 @@ class DigitalTwin:
             output = sciop.minimize(Model.objective, problem['doses_guess'],
                                     bounds = [(0,1)]*problem['doses_guess'].size,
                                     constraints = cons,
-                                    method = 'COBYLA', options = {'maxiter':1000,'catol':1e-10})
-        elif method == 2:
-            
+                                    method = 'COBYLA', options = {'maxiter':500,'catol':1e-10})
+        elif method == 2:  
             output = sciop.basinhopping(Model.objective, problem['doses_guess'],
-                                        niter=10, disp = True, interval = 2,
+                                        niter=20, disp = False, interval = 2,
                                         minimizer_kwargs = {'bounds':[(0,1)]*problem['doses_guess'].size,
                                                             'constraints':cons,
-                                                            'method':'COBYLA','options':{'maxiter':1000,'catol':1e-10}})    
+                                                            'method':'COBYLA','options':{'maxiter':500,'catol':1e-10}})    
         elif method == 3:
             output = sciop.minimize(Model.objective, problem['doses_guess'],
                                     bounds = [(0,1)]*problem['doses_guess'].size,
                                     constraints = cons,
-                                    method = 'COBYQA', options = {'maxiter':1000})
+                                    method = 'COBYQA', options = {'maxiter':500})
             
         else:
             output = sciop.minimize(Model.objective, problem['doses_guess'],
@@ -605,12 +624,12 @@ class DigitalTwin:
                                     constraints = cons
                                     ,options={'maxiter':1000})
         
-        print(output)
-        output.x = opt.reorganize_doses(output.x, problem)
+        # print(output)
+        temp = opt.reorganize_doses(output.x, problem)
         new_days = np.concatenate((problem['t_trx_soc'], problem['potential_days']),axis = 0)
-        new_doses = np.concatenate((problem['doses_soc'], output.x), axis = 0)
+        new_doses = np.concatenate((problem['doses_soc'], temp), axis = 0)
         optimized_trx = {'t_trx': new_days, 'doses': new_doses}
-        optimal_simulations = self.predict(treatment = optimized_trx, threshold = problem['threshold'])
+        optimal_simulations = self.predict(treatment = optimized_trx, threshold = problem['threshold'], change_t = problem['t_pred_end'])
         return optimal_simulations, optimized_trx, new_doses, test_simulations, output
     
     def optimize_doseMin(self, problem, problem_args, tol = 0.01, method = 2):
@@ -810,9 +829,9 @@ def plotCI_comparison(simulations, simulations2, color1 = [0,0,1], color2 = [0.9
             simulations['t_type'], simulations['t_meas'], simulations['volume_measured'], color = color1, title='Volume time course')
     #Drug A and C plots need to write but not worried about it yet
     drug_array = np.array(simulations['drug_tc'])
-    _plotCI(ax[1,0], simulations['tspan'], drug_array[:,:,0].T, ['Time (days)', 'Concentration','A.'],
+    _plotCI(ax[1,0], simulations['tspan'], drug_array[:,:,0].T, ['Time (days)', 'A. concentration','A.'],
             simulations['t_type'], simulations['t_meas'], color = color1, title='Ardiamycin time course')
-    _plotCI(ax[1,1], simulations['tspan'], drug_array[:,:,1].T, ['Time (days)', 'Concentration','C.'],
+    _plotCI(ax[1,1], simulations['tspan'], drug_array[:,:,1].T, ['Time (days)', 'C. concentration','C.'],
             simulations['t_type'], simulations['t_meas'], color = color1, title='Cyclophosphamide time course')
     
     _plotCI(ax[0,0], simulations2['tspan'], simulations2['cell_tc'], ['Time (days)', 'Cell Count','Sim. - opt.'],
@@ -822,9 +841,9 @@ def plotCI_comparison(simulations, simulations2, color1 = [0,0,1], color2 = [0.9
             simulations['t_type'], simulations['t_meas'], color = color2, arrow = False, order = 1)
     #Drug A and C plots need to write but not worried about it yet
     drug_array = np.array(simulations2['drug_tc'])
-    _plotCI(ax[1,0], simulations2['tspan'], drug_array[:,:,0].T, ['Time (days)', 'Concentration','A. - opt.'],
+    _plotCI(ax[1,0], simulations2['tspan'], drug_array[:,:,0].T, ['Time (days)', 'A. concentration','A. - opt.'],
             simulations2['t_type'], simulations2['t_meas'], color = color2, arrow = False, order = 1)
-    _plotCI(ax[1,1], simulations2['tspan'], drug_array[:,:,1].T, ['Time (days)', 'Concentration','C. - opt.'],
+    _plotCI(ax[1,1], simulations2['tspan'], drug_array[:,:,1].T, ['Time (days)', 'C. concentration','C. - opt.'],
             simulations2['t_type'], simulations2['t_meas'], color = color2, arrow = False, order = 1)
     
 ###############################################################################
@@ -897,7 +916,7 @@ def _maps_to_timecourse(maps, threshold, theta, h):
     return cell_tc, volume_tc
 
 import numba as nb
-@nb.njit(fastmath=True)
+@nb.njit(fastmath=True,cache=True)
 def _maps_to_timecourse_R(maps, threshold, theta, h, V):
     cell_tc = np.zeros((maps.shape[maps.ndim-1],1))
     volume_tc = np.zeros((maps.shape[maps.ndim-1],1))
@@ -907,7 +926,7 @@ def _maps_to_timecourse_R(maps, threshold, theta, h, V):
         volume_tc[i] = temp[temp>=threshold].size * np.prod(h)
     return cell_tc, volume_tc
 
-@nb.njit(fastmath=True)
+@nb.njit(fastmath=True,cache=True)
 def _maps_to_timecourse_sampled(sampled_maps, threshold, theta, h, V):
     sh = sampled_maps.shape
     cell_tc = np.zeros((sh[sampled_maps.ndim-1],sh[0]))
@@ -923,7 +942,7 @@ def _maps_to_timecourse_sampled(sampled_maps, threshold, theta, h, V):
             volume_tc[i,j] = m[mask].size * np.prod(h)      
     return cell_tc, volume_tc
 
-@nb.njit(fastmath=True)
+@nb.njit(fastmath=True,cache=True)
 def _maps_to_timecourse_sampled_est(sampled_maps, threshold, theta, h, V):
     #Only works with cell time course, returns empty list for volumes so we dont have to adjust entire problem
     #No plotting happens when using estimated results
@@ -964,11 +983,11 @@ def _visualize_MCMC_error(N_cal_r, N_pred_r, calibrations_r, predictions_r, pred
     for i in range(_atleast_2d(N_cal_r).shape[-1]):
         for j in range(r):
             curr = np.squeeze(calibrations_r[:,j,i]) - _atleast_2d(N_cal_r)[j,i]
-            _atleast_2d(ax)[i,j].hist(curr, bins = 20, density = True, label = 'Samples')
+            _atleast_2d(ax)[i,j].hist(curr, bins = 20, density = True, label = 'Samples', color = 'blue')
             _atleast_2d(ax)[i,j].set_xlabel('Coefficient error')
             _atleast_2d(ax)[i,j].set_aspect('auto')
             if j == 0:
-                _atleast_2d(ax)[i,j].set_ylabel('Visit '+str(i+2))
+                _atleast_2d(ax)[i,j].set_ylabel('Visit '+str(i+2)+' counts')
             if i == 0:
                 _atleast_2d(ax)[i,j].set_title('Mode '+str(j+1))
             try:
@@ -979,17 +998,17 @@ def _visualize_MCMC_error(N_cal_r, N_pred_r, calibrations_r, predictions_r, pred
                                           'r--',label='Likelihood')
             except:
                 pass
-            
+
     if pred_on == True:
         spacer = _atleast_2d(N_cal_r).shape[-1]
         for i in range(_atleast_2d(N_pred_r).shape[-1]):
             for j in range(r):
                 curr = np.squeeze(predictions_r[:,j,i]) - _atleast_2d(N_pred_r)[j,i]
-                _atleast_2d(ax)[i+spacer,j].hist(curr, bins = 20, density = True, label = 'Samples')
+                _atleast_2d(ax)[i+spacer,j].hist(curr, bins = 20, density = True, label = 'Samples', color = 'blue')
                 _atleast_2d(ax)[i+spacer,j].set_xlabel('Coefficient error')
                 _atleast_2d(ax)[i+spacer,j].set_aspect('auto')
                 if j == 0:
-                    _atleast_2d(ax)[i+spacer,j].set_ylabel('Visit '+str(i+2))
+                    _atleast_2d(ax)[i+spacer,j].set_ylabel('Visit '+str(i+3)+' counts')
                 try:
                     #Get likelihood distribution if sigma is in params
                     s = params['sigma'].get()
@@ -998,7 +1017,6 @@ def _visualize_MCMC_error(N_cal_r, N_pred_r, calibrations_r, predictions_r, pred
                                                      'r--',label='Likelihood')
                 except:
                     pass
-    plt.tight_layout()
     
 ############################# 2D Visualization ################################            
 def _visualize_2d(N_cal, N_pred, calibration, prediction, pred_on, tumor):
@@ -1149,7 +1167,7 @@ def _plotCI(ax, tspan, simulation, labels, t_type, t_meas, measured = None, colo
     if simulation.shape[1] != 1:
         #plot confidence interval stuff
         median_sim = np.median(simulation, axis = 1)
-        prctile = np.percentile(simulation, [1,99,25,75], axis = 1)
+        prctile = np.percentile(simulation, [0,100,25,75], axis = 1)
         ax.fill_between(tspan,prctile[0,:],prctile[1,:],color=color, alpha = 0.25,
                         label=labels[2] + ' - range',zorder=1 + order*4)
         ax.fill_between(tspan,prctile[2,:],prctile[3,:],color=color, alpha = 0.5,
