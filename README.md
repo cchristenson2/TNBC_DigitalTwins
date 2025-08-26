@@ -2,7 +2,7 @@
 
 ## Code for: Personalizing neoadjuvant chemotherapy regimens for triple-negative breast cancer using a biology-based digital twin
 
-### Reference: N/A, in progress
+### Reference: Christenson, C., Wu, C., Hormuth, D.A. et al. Personalizing neoadjuvant chemotherapy regimens for triple-negative breast cancer using a biology-based digital twin. npj Syst Biol Appl 11, 53 (2025). https://doi.org/10.1038/s41540-025-00531-z
 
 ### Examples:
 The notebook in the examples folder, "DigitalTwin_example", provides a step by step walk through for loading "MRI" images (virtual data) and constructing the digital twin framework. The overarching mathematical model is described below:
